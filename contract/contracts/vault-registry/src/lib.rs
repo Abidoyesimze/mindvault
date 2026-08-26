@@ -26,6 +26,10 @@ const LIFETIME_THRESHOLD: u32 = BUMP_AMOUNT - DAY_IN_LEDGERS;
 pub const MAX_METADATA_POINTER_LEN: u32 = 512;
 pub const MAX_TERMS_HASH_LEN: u32 = 64;
 pub const MAX_CONTENT_HASH_LEN: u32 = 128;
+/// Max length for a moderator's off-chain dispute reason hash, set via
+/// `set_flag_reason_hash`. Same bound as `MAX_TERMS_HASH_LEN` — both store a
+/// fixed-size digest of arbitrary off-chain content.
+pub const MAX_FLAG_REASON_HASH_LEN: u32 = 64;
 const MAX_TAGS: u32 = 8;
 /// Maximum price in USDC stroops (6 decimals). Represents 1 trillion USDC.
 pub const MAX_PRICE: i128 = 1_000_000_000_000_000_000;
@@ -115,6 +119,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("is_moderator", "—"),
     ("flag_resource", "moderator"),
     ("unflag_resource", "moderator"),
+    ("set_flag_reason_hash", "moderator"),
+    ("get_flag_reason_hash", "—"),
     // ── Terms hashes ──────────────────────────────────────────────────────
     ("set_terms_hash", "creator"),
     ("get_terms_hash", "—"),
@@ -178,6 +184,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (36, "CountOverflow", "The global resource count would overflow `u32`."),
     (37, "BatchTooLarge", "`get_many` was called with more than 20 ids."),
     (38, "DuplicateReceipt", "A purchase receipt is already anchored for `(resource_id, buyer)`."),
+    (39, "FlagReasonHashTooLong", "`reason_hash` in `set_flag_reason_hash` exceeds `MAX_FLAG_REASON_HASH_LEN` (64 bytes)."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -230,6 +237,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("rmmod", "false"),
     ("flag", "FlagEvent { id, moderator, reason }"),
     ("unflag", "resource id"),
+    ("flagrsn", "(moderator: Address, reason_hash: String)"),
     ("retagidx", "new_count: u32"),
     ("setfee", "FeeConfigUpdated { old_config, new_config }"),
     ("ttlext", "()"),
@@ -426,6 +434,11 @@ pub enum DataKey {
     FeeConfig,
     Moderator(Address),
     DisputeFlag(String),
+    /// Hash of a moderator's off-chain dispute reason writeup for a resource,
+    /// set via `set_flag_reason_hash`. Independent of `FlagReason` (a fixed
+    /// enum code): this carries a digest of free-form detail a moderator
+    /// recorded off-chain, analogous to `CreatorTerms`.
+    FlagReasonHash(String),
 }
 
 /// Event data emitted when a resource's metadata pointer is updated.
@@ -586,6 +599,9 @@ pub enum Error {
     BatchTooLarge = 37,
     /// A purchase receipt already exists for `(resource_id, buyer)`.
     DuplicateReceipt = 38,
+    /// `reason_hash` supplied to `set_flag_reason_hash` exceeds
+    /// `MAX_FLAG_REASON_HASH_LEN` (64 bytes).
+    FlagReasonHashTooLong = 39,
 }
 
 #[contract]
@@ -1938,6 +1954,66 @@ impl VaultRegistry {
         env.events()
             .publish((symbol_short!("unflag"), id.clone()), id);
         Ok(())
+    }
+
+    /// Store a hash of a moderator's off-chain dispute reason writeup for a
+    /// resource. Only an address currently holding the moderator role (see
+    /// `add_moderator`) may call this.
+    ///
+    /// Independent of `flag_resource`'s `FlagReason` code: that's a fixed,
+    /// small enum; this carries a digest of free-form off-chain detail (a
+    /// longer writeup, evidence links, etc.), the same pattern as
+    /// `set_terms_hash`. Calling this again for the same resource replaces
+    /// the stored hash. Does not require the resource to currently be
+    /// flagged, since a moderator may want to attach detail before or after
+    /// calling `flag_resource`.
+    ///
+    /// Emits a `flagrsn` event with `(moderator, reason_hash)`.
+    ///
+    /// Errors deterministically:
+    /// - [`Error::Unauthorized`] — caller does not hold the moderator role
+    /// - [`Error::InvalidResourceId`] — `id` fails format validation
+    /// - [`Error::NotFound`] — `id` is not a registered resource
+    /// - [`Error::FlagReasonHashTooLong`] — `reason_hash` exceeds `MAX_FLAG_REASON_HASH_LEN`
+    pub fn set_flag_reason_hash(
+        env: Env,
+        id: String,
+        moderator: Address,
+        reason_hash: String,
+    ) -> Result<(), Error> {
+        moderator.require_auth();
+        if !Self::is_moderator(env.clone(), moderator.clone()) {
+            return Err(Error::Unauthorized);
+        }
+        Self::validate_resource_id(&id)?;
+        if !env.storage().persistent().has(&DataKey::Resource(id.clone())) {
+            return Err(Error::NotFound);
+        }
+        Self::validate_bounded_string(
+            &reason_hash,
+            0,
+            MAX_FLAG_REASON_HASH_LEN,
+            Error::FlagReasonHashTooLong,
+            Error::FlagReasonHashTooLong,
+        )?;
+
+        let key = DataKey::FlagReasonHash(id.clone());
+        env.storage().persistent().set(&key, &reason_hash);
+        Self::bump_persistent(&env, &key);
+
+        env.events().publish(
+            (symbol_short!("flagrsn"), id),
+            (moderator, reason_hash),
+        );
+        Ok(())
+    }
+
+    /// Fetch the moderator dispute reason hash stored for a resource.
+    /// Errors with `NotFound` if none has been set.
+    pub fn get_flag_reason_hash(env: Env, id: String) -> Result<String, Error> {
+        Self::validate_resource_id(&id)?;
+        let key = DataKey::FlagReasonHash(id);
+        env.storage().persistent().get(&key).ok_or(Error::NotFound)
     }
 
     /// Extend the TTL of a resource's persistent storage entry.

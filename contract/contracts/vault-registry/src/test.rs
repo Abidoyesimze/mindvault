@@ -3456,6 +3456,8 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.flag_resource(&r0, &moderator, &FlagReason::Spam); // -> "flag"
     record(&env, &client, &mut observed);
+    client.set_flag_reason_hash(&r0, &moderator, &String::from_str(&env, "reasonhash")); // -> "flagrsn"
+    record(&env, &client, &mut observed);
     client.unflag_resource(&r0, &moderator); // -> "unflag"
     record(&env, &client, &mut observed);
     client.remove_moderator(&moderator); // -> "rmmod"
@@ -5660,6 +5662,108 @@ fn flag_and_unflag_roundtrip() {
         client.get(&id).dispute_flag,
         DisputeFlag::Flagged(FlagReason::Malicious)
     );
+}
+
+// ── Moderator flag reason hash (#649) ─────────────────────────────────────
+
+#[test]
+fn moderator_can_set_and_get_flag_reason_hash() {
+    let (env, creator, _admin, moderator, client) = setup_with_moderator();
+    let id = register_default(&env, &creator, &client, "reasonhash0");
+
+    client.set_flag_reason_hash(&id, &moderator, &String::from_str(&env, "sha256:abc123"));
+
+    assert_eq!(
+        client.get_flag_reason_hash(&id),
+        String::from_str(&env, "sha256:abc123")
+    );
+}
+
+#[test]
+fn set_flag_reason_hash_does_not_require_active_flag() {
+    // A moderator may attach reason detail before (or without ever) calling
+    // flag_resource — the two are independent.
+    let (env, creator, _admin, moderator, client) = setup_with_moderator();
+    let id = register_default(&env, &creator, &client, "reasonhash1");
+
+    assert_eq!(client.get(&id).dispute_flag, DisputeFlag::NoFlag);
+    client.set_flag_reason_hash(&id, &moderator, &String::from_str(&env, "sha256:nohash"));
+    assert_eq!(client.get(&id).dispute_flag, DisputeFlag::NoFlag);
+}
+
+#[test]
+fn set_flag_reason_hash_replaces_existing_hash() {
+    let (env, creator, _admin, moderator, client) = setup_with_moderator();
+    let id = register_default(&env, &creator, &client, "reasonhash2");
+
+    client.set_flag_reason_hash(&id, &moderator, &String::from_str(&env, "first"));
+    client.set_flag_reason_hash(&id, &moderator, &String::from_str(&env, "second"));
+
+    assert_eq!(
+        client.get_flag_reason_hash(&id),
+        String::from_str(&env, "second")
+    );
+}
+
+#[test]
+fn set_flag_reason_hash_non_moderator_is_unauthorized() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "reasonhash3");
+    let not_moderator = Address::generate(&env);
+
+    let res = client.try_set_flag_reason_hash(
+        &id,
+        &not_moderator,
+        &String::from_str(&env, "sha256:x"),
+    );
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn set_flag_reason_hash_revoked_moderator_is_unauthorized() {
+    let (env, creator, admin, moderator, client) = setup_with_moderator();
+    let id = register_default(&env, &creator, &client, "reasonhash4");
+    client.remove_moderator(&moderator);
+
+    let res = client.try_set_flag_reason_hash(&id, &moderator, &String::from_str(&env, "x"));
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+    let _ = admin;
+}
+
+#[test]
+fn set_flag_reason_hash_missing_resource_fails() {
+    let (env, _creator, _admin, moderator, client) = setup_with_moderator();
+    let res = client.try_set_flag_reason_hash(
+        &String::from_str(&env, "nosuchresource"),
+        &moderator,
+        &String::from_str(&env, "x"),
+    );
+    assert_eq!(res, Err(Ok(Error::NotFound)));
+}
+
+#[test]
+fn set_flag_reason_hash_rejects_over_max_length() {
+    let (env, creator, _admin, moderator, client) = setup_with_moderator();
+    let id = register_default(&env, &creator, &client, "reasonhash5");
+
+    let mut buf = alloc::string::String::new();
+    while (buf.len() as u32) < MAX_FLAG_REASON_HASH_LEN + 1 {
+        buf.push('a');
+    }
+    let too_long = String::from_str(&env, &buf);
+
+    let res = client.try_set_flag_reason_hash(&id, &moderator, &too_long);
+    assert_eq!(res, Err(Ok(Error::FlagReasonHashTooLong)));
+}
+
+#[test]
+fn get_flag_reason_hash_missing_fails() {
+    let (env, creator, _admin, moderator, client) = setup_with_moderator();
+    let id = register_default(&env, &creator, &client, "reasonhash6");
+    let _ = moderator;
+
+    let res = client.try_get_flag_reason_hash(&id);
+    assert_eq!(res, Err(Ok(Error::NotFound)));
 }
 
 // ── Storage TTL tests for index entries (#371) ────────────────────────────────
