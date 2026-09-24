@@ -711,6 +711,44 @@ function requireWallet(): AgentWallet {
   return wallet;
 }
 
+/**
+ * Normalize a metadata pointer string before writing it to the vault registry.
+ *
+ * HTTP(S) URL pointers are normalized the same way `hashLinkResource` on the
+ * server normalizes external URLs at publish time (see
+ * `server/src/utils/crypto.ts`):
+ *
+ *   - Lowercase scheme + host
+ *   - Strip trailing slash from pathname (unless the pathname is exactly "/")
+ *   - Sort query parameters alphabetically
+ *
+ * This ensures a pointer like `https://example.com/metadata.json/` produced by
+ * an update call is identical on-chain to the `https://example.com/metadata.json`
+ * form used at publish, so content-hash comparisons across the two operations
+ * remain consistent.
+ *
+ * Non-HTTP(S) schemes (ipfs://, ar://, sha256:, 0x…) are passed through
+ * unchanged — their syntax is scheme-specific and we must not mutate them.
+ */
+export function normalizeMetadataPointer(pointer: string): string {
+  const trimmed = pointer.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  try {
+    const u = new URL(trimmed);
+    u.hostname = u.hostname.toLowerCase();
+    u.pathname = u.pathname.replace(/\/+$/, "") || "/";
+    const sorted = Array.from(u.searchParams.entries()).sort(([a], [b]) => a.localeCompare(b));
+    u.search = "";
+    sorted.forEach(([k, v]) => u.searchParams.append(k, v));
+    return u.toString();
+  } catch {
+    // Malformed URL — return as-is and let the contract validation reject it.
+    return trimmed;
+  }
+}
+
 function publisherCredential(profile: string = activeProfileName): CredentialContext {
   return { kind: "publisher_api_key", profile };
 }
@@ -1766,7 +1804,15 @@ export function usdcToStroops(usdc: string): bigint {
 
 export async function updateMetadata(resourceId: string, metadata: string): Promise<string> {
   const wallet = requireWallet();
-  if (_isMock()) return mockUpdateMetadata(resourceId, metadata);
+
+  // Normalize the metadata pointer before submitting so that equivalent
+  // HTTP(S) URLs always produce the same on-chain value, matching the
+  // normalization applied at publish time (server/src/utils/crypto.ts
+  // `hashLinkResource`/`normalizeUrl`).  Non-URL pointers (ipfs://, ar://,
+  // sha256:, 0x…) are passed through unchanged.
+  const normalizedMetadata = normalizeMetadataPointer(metadata);
+
+  if (_isMock()) return mockUpdateMetadata(resourceId, normalizedMetadata);
 
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -1777,7 +1823,7 @@ export async function updateMetadata(resourceId: string, metadata: string): Prom
 
   let tx: Awaited<ReturnType<typeof client.update_metadata>>;
   try {
-    tx = await client.update_metadata({ id: resourceId, metadata });
+    tx = await client.update_metadata({ id: resourceId, metadata: normalizedMetadata });
   } catch (err: any) {
     if (isTimeoutError(err)) {
       throw mcpError(
