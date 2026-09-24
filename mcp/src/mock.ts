@@ -387,6 +387,36 @@ export function mockSetListed(resourceId: string, listed: boolean): string {
 }
 
 /**
+ * Deterministic mock for batch publish. Returns a summary that mirrors the
+ * real `publishBatch` output with all items approved and registered on-chain.
+ */
+export function mockPublishBatch(
+  items: Array<{ title: string; description?: string; price: string; externalUrl: string }>,
+): string {
+  const itemResults = items.map((item, i) => ({
+    index: i,
+    title: item.title,
+    id: `mock-batch-${i + 1}`,
+    verificationStatus: "approved" as const,
+    onchainStatus: "registered",
+  }));
+  return JSON.stringify(
+    {
+      requested: items.length,
+      verified: items.length,
+      rejected: 0,
+      errored: 0,
+      onchainStatus: "registered",
+      txHash: `MOCK_TX_BATCH_REGISTER`,
+      items: itemResults,
+      source: "on-chain (mock)",
+    },
+    null,
+    2,
+  );
+}
+
+/**
  * Deterministic mock receipt for buy flows. Returns a purchase receipt object
  * that mirrors the shape of a real x402 payment receipt, with deterministic
  * fields so tests can assert on exact values.

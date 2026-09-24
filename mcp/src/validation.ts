@@ -193,6 +193,10 @@ const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
 export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
   "mindvault_publish_status",
   "mindvault_purchase_history",
+  // items is an array of objects — the generic validator handles only flat
+  // string/flag/hash/integer/enum/tag_array fields. Argument shape is enforced
+  // by the input schema in tools.ts and validated inline in the dispatch handler.
+  "mindvault_publish_batch",
 ];
 
 /**

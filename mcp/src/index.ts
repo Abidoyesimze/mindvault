@@ -160,6 +160,7 @@ import {
   recordCatalogSnapshot,
   recordPreviewSnapshot,
 } from "./catalogCache.js";
+import { publishBatch, type BatchPublishItem } from "./tools/publish.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -2593,6 +2594,7 @@ const STATE_MUTATING_TOOLS = new Set([
   "mindvault_use_profile",
   "mindvault_register",
   "mindvault_publish",
+  "mindvault_publish_batch",
   "mindvault_buy",
   "mindvault_register_onchain",
   "mindvault_update_metadata",
@@ -2689,6 +2691,33 @@ async function dispatchToolOutcome(
         });
       case "mindvault_publish_status":
         return publishStatus(rawRecord, onProgress);
+      case "mindvault_publish_batch": {
+        const batchItems = rawRecord.items;
+        if (!Array.isArray(batchItems) || batchItems.length === 0) {
+          throw new Error("mindvault_publish_batch: items must be a non-empty array.");
+        }
+        const typedItems: BatchPublishItem[] = batchItems.map((item: any, i: number) => {
+          if (!item || typeof item !== "object") {
+            throw new Error(`mindvault_publish_batch: items[${i}] must be an object.`);
+          }
+          if (typeof item.title !== "string" || item.title.trim() === "") {
+            throw new Error(`mindvault_publish_batch: items[${i}].title must be a non-empty string.`);
+          }
+          if (typeof item.price !== "string" || item.price.trim() === "") {
+            throw new Error(`mindvault_publish_batch: items[${i}].price must be a non-empty string.`);
+          }
+          if (typeof item.externalUrl !== "string" || item.externalUrl.trim() === "") {
+            throw new Error(`mindvault_publish_batch: items[${i}].externalUrl must be a non-empty string.`);
+          }
+          return {
+            title: item.title,
+            description: typeof item.description === "string" ? item.description : undefined,
+            price: item.price,
+            externalUrl: item.externalUrl,
+          };
+        });
+        return publishBatch(typedItems, onProgress);
+      }
       case "mindvault_buy":
         return buy(
           requiredString(dryRunArgs, "resourceId"),

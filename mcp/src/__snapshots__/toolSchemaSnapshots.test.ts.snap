@@ -1180,6 +1180,166 @@ exports[`tool schema snapshots > mindvault_publish > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_publish_batch > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": false,
+  "readOnlyHint": false,
+  "title": "Publish Batch",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_publish_batch > input schema 1`] = `
+{
+  "properties": {
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
+    "items": {
+      "description": "List of resources to publish (1–10 items). Each item must include title, price, and externalUrl.",
+      "items": {
+        "properties": {
+          "description": {
+            "description": "Optional description (max 2048 characters).",
+            "type": "string",
+          },
+          "externalUrl": {
+            "description": "Public http(s) URL buyers receive after payment.",
+            "examples": [
+              "https://example.com/data.json",
+            ],
+            "type": "string",
+          },
+          "price": {
+            "description": "Price in USDC as a decimal string, e.g. '5.00'.",
+            "examples": [
+              "1.00",
+              "5.00",
+              "10.00",
+            ],
+            "type": "string",
+          },
+          "title": {
+            "description": "Resource title (1–256 characters).",
+            "examples": [
+              "My Dataset",
+              "Research Paper #1",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "title",
+          "price",
+          "externalUrl",
+        ],
+        "type": "object",
+      },
+      "maxItems": 10,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [
+    "items",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_publish_batch > output schema 1`] = `
+{
+  "properties": {
+    "errored": {
+      "type": "number",
+    },
+    "items": {
+      "items": {
+        "properties": {
+          "error": {
+            "type": "string",
+          },
+          "flags": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "id": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "index": {
+            "type": "number",
+          },
+          "onchainStatus": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "title": {
+            "type": "string",
+          },
+          "verificationStatus": {
+            "enum": [
+              "approved",
+              "rejected",
+              "error",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "index",
+          "title",
+          "id",
+          "verificationStatus",
+          "onchainStatus",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "onchainStatus": {
+      "type": "string",
+    },
+    "rejected": {
+      "type": "number",
+    },
+    "requested": {
+      "type": "number",
+    },
+    "txHash": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "verified": {
+      "type": "number",
+    },
+  },
+  "required": [
+    "requested",
+    "verified",
+    "rejected",
+    "errored",
+    "onchainStatus",
+    "txHash",
+    "items",
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_publish_status > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -3042,6 +3202,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_network_profile",
   "mindvault_preview",
   "mindvault_publish",
+  "mindvault_publish_batch",
   "mindvault_publish_status",
   "mindvault_purchase_history",
   "mindvault_recover_catalog_cache",

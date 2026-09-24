@@ -40,6 +40,7 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_recover_catalog_cache",
   "mindvault_publish_status",
   "mindvault_purchase_history",
+  "mindvault_publish_batch",
 ]
 `;
 

@@ -15,7 +15,7 @@ For structured JSON results (`structuredContent` + `outputSchema`) see
 For client installation and configuration see
 [mcp-client-configs.md](mcp-client-configs.md).
 
-**38 tools** as of last generation.
+**39 tools** as of last generation.
 
 ---
 
@@ -106,7 +106,8 @@ For client installation and configuration see
 | --- | --- | --- |
 | `mindvault_registry_count` | Return on-chain resource counts directly from the vault-registry contract: total registered resources (count), currently listed resources (listed_count), and optionally how many resources a specific creator currently owns (creator_resource_count). Use this to get a quick summary of registry size without paging through all entries. | yes |
 | `mindvault_recover_catalog_cache` | Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale. | yes |
+| `mindvault_publish_batch` | Publish up to 10 link resources in a single batch. Each resource is created and verified via x402 payment individually (the agent wallet pays the verification fee per item), then all verified resources are registered on-chain in one `register_batch` Soroban transaction — a single wallet approval covers the entire batch. Returns a summary with per-item verification status, on-chain status, and the batch transaction hash. | yes |
 
 ---
 
-_This file was generated from `mcp/src/tools.ts` — 38 tools._
+_This file was generated from `mcp/src/tools.ts` — 39 tools._
