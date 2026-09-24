@@ -6649,6 +6649,123 @@ fn settle_payment_emits_settle_event() {
     assert_eq!(decoded.state, PaymentState::Settled);
 }
 
+#[test]
+fn record_payment_settle_payment_anchor_end_to_end() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let resource_id = String::from_str(&env, "x402e2e");
+    let receipt_id = String::from_str(&env, "x402-receipt-001");
+    let tx_hash = String::from_str(&env, "sha256:x402-transaction-001");
+    let receipt_hash = String::from_str(&env, "sha256:x402-anchor-001");
+    let amount = 100i128;
+
+    client.add_settler(&settler);
+    client.add_verifier(&verifier);
+    assert!(client.is_settler(&settler));
+    assert!(client.is_verifier(&verifier));
+
+    client.register(
+        &creator,
+        &resource_id,
+        &amount,
+        &String::from_str(&env, "ipfs://x402e2e"),
+        &empty_tags(&env),
+    );
+
+    env.ledger().set_sequence_number(700);
+    client.record_payment(
+        &settler,
+        &receipt_id,
+        &resource_id,
+        &payer,
+        &amount,
+        &tx_hash,
+    );
+    let expected_recorded = PaymentReceipt {
+        receipt_id: receipt_id.clone(),
+        resource_id: resource_id.clone(),
+        payer: payer.clone(),
+        amount,
+        state: PaymentState::Escrowed,
+        tx_hash: tx_hash.clone(),
+        recorded_at: 700,
+        ledger: 700,
+    };
+
+    let payment_events = env.events().all();
+    assert_eq!(payment_events.len(), 1);
+    let (payment_contract, payment_topics, payment_data) = payment_events.get(0).unwrap();
+    assert_eq!(payment_contract, client.address);
+    assert_eq!(payment_topics.len(), 2);
+    let payment_symbol: Symbol =
+        Symbol::try_from_val(&env, &payment_topics.get(0).unwrap()).unwrap();
+    assert_eq!(payment_symbol, symbol_short!("payment"));
+    let payment_topic_id: String =
+        String::try_from_val(&env, &payment_topics.get(1).unwrap()).unwrap();
+    assert_eq!(payment_topic_id, receipt_id);
+    let payment_event: PaymentReceipt = PaymentReceipt::try_from_val(&env, &payment_data).unwrap();
+    assert_eq!(payment_event, expected_recorded);
+    assert_eq!(client.get_payment(&receipt_id), expected_recorded);
+    assert_eq!(
+        client.get_payment_receipt(&resource_id, &payer),
+        expected_recorded
+    );
+
+    env.ledger().set_sequence_number(701);
+    client.settle_payment(&settler, &receipt_id);
+    let expected_settled = PaymentReceipt {
+        state: PaymentState::Settled,
+        ..expected_recorded.clone()
+    };
+
+    let settle_events = env.events().all();
+    assert_eq!(settle_events.len(), 1);
+    let (settle_contract, settle_topics, settle_data) = settle_events.get(0).unwrap();
+    assert_eq!(settle_contract, client.address);
+    assert_eq!(settle_topics.len(), 2);
+    let settle_symbol: Symbol = Symbol::try_from_val(&env, &settle_topics.get(0).unwrap()).unwrap();
+    assert_eq!(settle_symbol, symbol_short!("settle"));
+    let settle_topic_id: String =
+        String::try_from_val(&env, &settle_topics.get(1).unwrap()).unwrap();
+    assert_eq!(settle_topic_id, receipt_id);
+    let settle_event: PaymentReceipt = PaymentReceipt::try_from_val(&env, &settle_data).unwrap();
+    assert_eq!(settle_event, expected_settled);
+    assert_eq!(client.get_payment(&receipt_id), expected_settled);
+    assert_eq!(
+        client.get_payment_receipt(&resource_id, &payer),
+        expected_settled
+    );
+
+    env.ledger().set_sequence_number(702);
+    client.anchor_purchase_receipt(&verifier, &resource_id, &payer, &receipt_hash);
+    let expected_anchor = PurchaseReceiptAnchor {
+        resource_id: resource_id.clone(),
+        buyer: payer.clone(),
+        receipt_hash: receipt_hash.clone(),
+        ledger: 702,
+    };
+
+    let anchor_events = env.events().all();
+    assert_eq!(anchor_events.len(), 1);
+    let (anchor_contract, anchor_topics, anchor_data) = anchor_events.get(0).unwrap();
+    assert_eq!(anchor_contract, client.address);
+    assert_eq!(anchor_topics.len(), 2);
+    let anchor_symbol: Symbol = Symbol::try_from_val(&env, &anchor_topics.get(0).unwrap()).unwrap();
+    assert_eq!(anchor_symbol, symbol_short!("anchor"));
+    let anchor_topic_id: String =
+        String::try_from_val(&env, &anchor_topics.get(1).unwrap()).unwrap();
+    assert_eq!(anchor_topic_id, resource_id);
+    let anchor_event: PurchaseReceiptAnchor =
+        PurchaseReceiptAnchor::try_from_val(&env, &anchor_data).unwrap();
+    assert_eq!(anchor_event, expected_anchor);
+    assert_eq!(
+        client.get_purchase_receipt(&resource_id, &payer),
+        expected_anchor
+    );
+}
+
 /// Failed record_payment calls leave no receipt behind.
 #[test]
 fn failed_record_payment_does_not_store_receipt() {
