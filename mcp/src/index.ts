@@ -96,6 +96,13 @@ import {
 } from "./publishStatus.js";
 import { type ApiResponse } from "./apiResponse.js";
 import { safeErrorMessage, safeLog } from "./redaction.js";
+import {
+  compareUsdc,
+  normalizeUsdcBalance,
+  stroopsToUsdc,
+  trimUsdc,
+  usdcToStroops as toStroops,
+} from "./usdcAmount.js";
 import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -830,10 +837,26 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
     };
   }
 
+  // Horizon sends a decimal string; the balance is tagged with that encoding
+  // and normalized once, so the number this status is decided from can never be
+  // a stroop count read as decimal USDC (#838).
   const usdc = usdcBalance.balance ?? "0";
-  const usdcFloat = parseFloat(usdc);
+  const normalized = normalizeUsdcBalance({ source: "horizon", balance: usdc });
 
-  if (usdcFloat === 0) {
+  if (normalized === null) {
+    return {
+      status: "zero",
+      xlmBalance: xlm,
+      xlmReserve: reserve.toFixed(1),
+      xlmAvailable: available.toFixed(7),
+      usdcBalance: "0",
+      message:
+        `Horizon reported a USDC balance this server could not read ("${String(usdc).slice(0, 32)}"), ` +
+        `so it is treated as zero rather than guessed at. Re-run mindvault_wallet_info; if it persists, the Horizon endpoint is returning an unexpected balance format.`,
+    };
+  }
+
+  if (toStroops(normalized) === 0n) {
     return {
       status: "zero",
       xlmBalance: xlm,
@@ -927,14 +950,28 @@ async function insufficientFundsMessage(
   const need = typeof amountNeeded === "number" ? amountNeeded : parseFloat(amountNeeded);
   if (!Number.isFinite(need)) return null;
   const balance = await getUsdcBalance(wallet.publicKey);
-  const have = parseFloat(balance);
-  if (!Number.isFinite(have) || have >= need) return null;
-  const shortfall = need - have;
+
+  // Compared in stroops rather than floats, so the decision to spend never
+  // depends on binary rounding, and an amount that cannot be parsed blocks the
+  // payment instead of reading as "enough" (#838).
+  const needAmount = need.toFixed(7);
+  const comparison = compareUsdc(balance, needAmount);
+  if (comparison === null) {
+    return [
+      `Cannot confirm the USDC balance before paying to ${action}.`,
+      `Amount needed: ${trimUsdc(needAmount)} USDC`,
+      `Reported balance: "${String(balance).slice(0, 32)}" could not be read as a USDC amount.`,
+      `No payment was submitted. Check the wallet with mindvault_wallet_info and retry.`,
+    ].join("\n");
+  }
+  if (comparison >= 0) return null;
+
+  const shortfallStroops = (toStroops(needAmount) ?? 0n) - (toStroops(balance) ?? 0n);
   return [
     `Insufficient USDC to ${action}.`,
-    `Amount needed: ${need} USDC`,
-    `Current balance: ${have} USDC`,
-    `Shortfall: ${shortfall.toFixed(7).replace(/\.?0+$/, "")} USDC`,
+    `Amount needed: ${trimUsdc(needAmount)} USDC`,
+    `Current balance: ${trimUsdc(balance)} USDC`,
+    `Shortfall: ${trimUsdc(stroopsToUsdc(shortfallStroops))} USDC`,
     `Fund ${wallet.publicKey} with the shortfall and retry.`,
   ].join("\n");
 }
@@ -1842,21 +1879,20 @@ async function agentStatus(): Promise<string> {
   return JSON.stringify(res.data, null, 2);
 }
 
-function stroopsToUsdc(stroops: bigint): string {
-  const STROOPS_PER_USDC = 10_000_000n;
-  const negative = stroops < 0n;
-  const abs = negative ? -stroops : stroops;
-  const whole = abs / STROOPS_PER_USDC;
-  const frac = abs % STROOPS_PER_USDC;
-  return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(7, "0")}`;
-}
-
+/**
+ * Decimal USDC for an on-chain stroop amount, throwing on an amount the shared
+ * converter will not accept. The registry contract takes stroops, so a price
+ * that cannot be expressed exactly must stop here rather than be rounded into
+ * a transaction (#838).
+ */
 export function usdcToStroops(usdc: string): bigint {
-  const parts = usdc.split(".");
-  const whole = BigInt(parts[0] || "0");
-  const fracStr = (parts[1] || "").padEnd(7, "0").slice(0, 7);
-  const frac = BigInt(fracStr);
-  return whole * 10_000_000n + frac;
+  const stroops = toStroops(usdc);
+  if (stroops === null) {
+    throw new Error(
+      `Invalid USDC amount "${usdc}". Use a non-negative decimal with at most 7 decimal places, e.g. "5.00".`,
+    );
+  }
+  return stroops;
 }
 
 export async function updateMetadata(resourceId: string, metadata: string): Promise<string> {
