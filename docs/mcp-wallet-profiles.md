@@ -77,8 +77,16 @@ mindvault_reset { "all": true, "confirm": true }
 
 Notes:
 
-- `confirm` accepts the same truthy forms as `confirmMainnet` (`true`, `1`,
-  `"true"`, `"yes"`). Anything else — including omitting it — is "not confirmed".
+- `confirm` accepts exactly `true`, `1`, `"true"`, `"1"`, and `"yes"`
+  (case-insensitive, surrounding space ignored). Anything else — including
+  omitting it — is "not confirmed".
+- That list is **codified in the guard itself**, not inherited from another
+  helper (#836). The server holds more than one notion of "truthy": mock mode
+  also accepts `"on"`, and the argument validator coerces its own set of flag
+  spellings. Reset is the one confirmation whose false positive cannot be undone,
+  so widening it has to be a deliberate edit to `RESET_CONFIRM_STRINGS` in
+  [`mcp/src/resetGuard.ts`](../mcp/src/resetGuard.ts) — a test pins the set, and
+  relaxing any _other_ truthy vocabulary cannot widen this one by accident.
 - The warning is deterministic and never echoes a secret key.
 - The guard is independent of the mainnet guardrail: on mainnet a reset needs
   both `confirmMainnet` and `confirm`.
