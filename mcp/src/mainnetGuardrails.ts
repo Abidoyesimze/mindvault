@@ -118,3 +118,40 @@ export function formatMainnetDiagnostics(input: {
   ];
   return lines.join("\n");
 }
+
+/**
+ * Session-level banner explaining the active network and exactly how to
+ * confirm a mainnet mutation — meant to be read once at the start of an agent
+ * session (see mindvault_mainnet_banner in index.ts, which layers the
+ * paid-operation confirmation policy from paidOperations.ts on top of this),
+ * not repeated on every diagnostic call the way formatMainnetDiagnostics is.
+ */
+export function formatMainnetBanner(input: {
+  stellarNetwork: string;
+  x402Network: string;
+  registryContractId: string;
+  allowMainnetEnv: boolean;
+}): string {
+  const gatedList = MAINNET_GATED_TOOLS.join(", ");
+
+  if (!isMainnetNetwork(input.stellarNetwork)) {
+    return [
+      `MindVault MCP session — network: ${input.stellarNetwork} (${input.x402Network}).`,
+      "This is a test network: USDC balances and on-chain writes here are not real funds, and no gas fee is real money.",
+      `Registry contract: ${input.registryContractId || "(unset)"}.`,
+      `Paid and destructive tools (${gatedList}) still run their full flow end-to-end here, at no financial risk, so testnet is safe to explore freely.`,
+    ].join("\n");
+  }
+
+  return [
+    `⚠ MindVault MCP session — network: ${input.stellarNetwork} (${input.x402Network}). THIS IS MAINNET.`,
+    "Every purchase, publish, and on-chain write below spends real USDC and/or a real Stellar network transaction fee. There is no undo.",
+    `Registry contract: ${input.registryContractId || "(unset — required before any on-chain call will work)"}.`,
+    "",
+    `Before any paid or destructive operation (${gatedList}), you must confirm explicitly — one of:`,
+    "  • pass confirmMainnet: true on that specific tool call, or",
+    "  • set MINDVAULT_ALLOW_MAINNET=1 on the MCP server process, which skips per-call confirmation for the rest of this session.",
+    "",
+    "Read-only tools (browse, search, preview, registry_lookup, registry_list, tx_status, registry_health, network_profile, …) are never gated and never cost anything.",
+  ].join("\n");
+}
