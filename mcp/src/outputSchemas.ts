@@ -241,6 +241,21 @@ export const REGISTRY_LIST_OUTPUT_SCHEMA = {
   required: ["source", "start", "limit", "count", "resources", "contract"],
 } as const;
 
+export const REGISTRY_COUNT_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    source: { type: "string" },
+    count: { type: "integer" },
+    listedCount: { type: "integer" },
+    creatorCount: { type: "integer" },
+    creator: { type: "string" },
+    contract: {},
+    network: {},
+    rpc: {},
+  },
+  required: ["source", "count", "listedCount", "contract"],
+} as const;
+
 export const REGISTRY_INFO_OUTPUT_SCHEMA = {
   type: "object",
   properties: {

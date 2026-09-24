@@ -1584,6 +1584,63 @@ exports[`tool schema snapshots > mindvault_register_onchain > output schema 1`] 
 }
 `;
 
+exports[`tool schema snapshots > mindvault_registry_count > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Registry Count",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_count > input schema 1`] = `
+{
+  "properties": {
+    "creator": {
+      "description": "Optional Stellar public key (G…). When supplied, also returns the number of resources currently owned by that address (creator_resource_count). Omit to return only the global counts.",
+      "examples": [
+        "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_count > output schema 1`] = `
+{
+  "properties": {
+    "contract": {},
+    "count": {
+      "type": "integer",
+    },
+    "creator": {
+      "type": "string",
+    },
+    "creatorCount": {
+      "type": "integer",
+    },
+    "listedCount": {
+      "type": "integer",
+    },
+    "network": {},
+    "rpc": {},
+    "source": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "source",
+    "count",
+    "listedCount",
+    "contract",
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_registry_health > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -2990,6 +3047,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_recover_catalog_cache",
   "mindvault_register",
   "mindvault_register_onchain",
+  "mindvault_registry_count",
   "mindvault_registry_health",
   "mindvault_registry_info",
   "mindvault_registry_list",

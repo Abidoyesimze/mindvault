@@ -499,3 +499,35 @@ export function mockRegistryList(
     2,
   );
 }
+
+/**
+ * Stand-in for the on-chain count()/listed_count()/creator_resource_count()
+ * trio. Derives values from the same MOCK_REGISTRY_RESOURCES seed so the
+ * numbers stay consistent with mockRegistryList.
+ */
+export function mockRegistryCount(creator: string | undefined, contractId: string): string {
+  const all = MOCK_REGISTRY_RESOURCES;
+  const count = all.length;
+  const listedCount = all.filter((r) => r.listed).length;
+
+  const payload: {
+    source: string;
+    count: number;
+    listedCount: number;
+    creatorCount?: number;
+    creator?: string;
+    contract: string;
+  } = {
+    source: "on-chain (mock)",
+    count,
+    listedCount,
+    contract: contractId,
+  };
+
+  if (creator != null) {
+    payload.creator = creator;
+    payload.creatorCount = all.filter((r) => r.creator === creator).length;
+  }
+
+  return JSON.stringify(payload, null, 2);
+}

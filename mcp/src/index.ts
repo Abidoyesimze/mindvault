@@ -50,6 +50,7 @@ import {
 import {
   createMockFetch,
   mockEnabledFromEnv,
+  mockRegistryCount,
   mockRegistryLookup,
   mockRegistryList,
   mockUpdateMetadata,
@@ -2234,6 +2235,89 @@ export async function registryList(start: number, limit: number): Promise<string
   );
 }
 
+export async function registryCount(creator?: string): Promise<string> {
+  if (_isMock()) return mockRegistryCount(creator, REGISTRY_CONTRACT_ID);
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let count: number;
+  let listedCount: number;
+  let creatorCount: number | null = null;
+
+  try {
+    const countTx = await client.count();
+    count = Number(countTx.result);
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `Registry count() failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  try {
+    // listed_count is present in the Rust contract but not yet included in the
+    // generated TypeScript bindings; access via `as any` until bindings are
+    // regenerated with `pnpm contract:bindings`.
+    const listedTx = await (client as any).listed_count();
+    listedCount = Number(listedTx.result);
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `Registry listed_count() failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  if (creator) {
+    try {
+      const creatorTx = await (client as any).creator_resource_count({ creator });
+      creatorCount = Number(creatorTx.result);
+    } catch (err: unknown) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Registry creator_resource_count() failed for "${creator}" (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+  }
+
+  const payload: {
+    source: string;
+    count: number;
+    listedCount: number;
+    creatorCount?: number;
+    creator?: string;
+    contract: string;
+    network: string;
+    rpc: string;
+  } = {
+    source: "on-chain",
+    count,
+    listedCount,
+    contract: REGISTRY_CONTRACT_ID,
+    network: REGISTRY_NETWORK_PASSPHRASE,
+    rpc: SOROBAN_RPC_URL,
+  };
+
+  if (creator != null) {
+    payload.creator = creator;
+    payload.creatorCount = creatorCount!;
+  }
+
+  return JSON.stringify(payload, null, 2);
+}
+
 export async function recoverCatalogCache(): Promise<string> {
   if (_isMock()) {
     return JSON.stringify(
@@ -2639,6 +2723,8 @@ async function dispatchToolOutcome(
           optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
           optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
         );
+      case "mindvault_registry_count":
+        return registryCount(optionalString(args, "creator"));
       case "mindvault_update_metadata":
         return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
       case "mindvault_set_price":

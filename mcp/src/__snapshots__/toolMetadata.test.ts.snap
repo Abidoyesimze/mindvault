@@ -21,6 +21,7 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_check_consistency",
   "mindvault_registry_lookup",
   "mindvault_registry_list",
+  "mindvault_registry_count",
   "mindvault_tx_status",
   "mindvault_reset",
   "mindvault_backup_state",
