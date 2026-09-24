@@ -83,6 +83,8 @@ export const FEE_SPENDING_TOOLS = [
   "mindvault_set_price",
   "mindvault_transfer_ownership",
   "mindvault_set_listed",
+  "mindvault_freeze",
+  "mindvault_royalty",
 ] as const;
 
 /** What a tool spends, or `null` when it spends nothing. */

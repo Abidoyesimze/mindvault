@@ -19,6 +19,7 @@ import {
   AGENT_STATUS_OUTPUT_SCHEMA,
   CATALOG_LIST_OUTPUT_SCHEMA,
   CONSISTENCY_OUTPUT_SCHEMA,
+  FEE_CONFIG_OUTPUT_SCHEMA,
   LIST_PROFILES_OUTPUT_SCHEMA,
   METRICS_OUTPUT_SCHEMA,
   NETWORK_PROFILE_OUTPUT_SCHEMA,
@@ -888,6 +889,94 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: ONCHAIN_MUTATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Set Listed",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_freeze",
+    description:
+      'Permanently freeze the on-chain metadata pointer for a resource. Only the resource creator/owner may call this. This is irreversible and requires confirm: "freeze_metadata".',
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "The resource ID whose metadata should be frozen. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        confirm: {
+          type: "string",
+          description:
+            'Required exact confirmation string. Pass "freeze_metadata" to perform the irreversible freeze.',
+          examples: ["freeze_metadata"],
+        },
+        confirmMainnet: {
+          type: "boolean",
+          description:
+            "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
+        },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
+      },
+      required: ["resourceId", "confirm"],
+    },
+    outputSchema: ONCHAIN_MUTATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Freeze Metadata",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_fee_config",
+    description:
+      "Read the on-chain registry fee configuration: platform fee, royalty fee, total fee, creator payout basis points, and fee recipient. Use this before quoting creator payout.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: FEE_CONFIG_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Fee Config",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_royalty",
+    description:
+      "Set or clear a resource-specific royalty recipient override on the vault registry contract. Only the resource creator/owner may call this.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "The resource ID to configure royalties for. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        royaltyRecipient: {
+          type: "string",
+          description:
+            "The Stellar public key (G... , 56 chars) to receive royalties. Omit when clear is true.",
+          examples: ["GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH"],
+        },
+        clear: {
+          type: "boolean",
+          description:
+            "When true, clear the resource-specific royalty recipient and use the registry default.",
+        },
+        confirmMainnet: {
+          type: "boolean",
+          description:
+            "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
+        },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: ONCHAIN_MUTATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Set Royalty Recipient",
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,

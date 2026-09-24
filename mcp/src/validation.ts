@@ -316,6 +316,25 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
   },
+  mindvault_freeze: {
+    resourceId: RESOURCE_ID,
+    confirm: {
+      kind: "string",
+      required: true,
+      pattern: /^freeze_metadata$/,
+      patternHint: 'the exact string "freeze_metadata"',
+    },
+    confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
+  },
+  mindvault_fee_config: {},
+  mindvault_royalty: {
+    resourceId: RESOURCE_ID,
+    royaltyRecipient: STELLAR_ADDRESS,
+    clear: { kind: "flag" },
+    confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
+  },
   mindvault_check_state_permissions: {},
   mindvault_registry_health: {},
   mindvault_import_wallet: {

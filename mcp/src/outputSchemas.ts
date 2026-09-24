@@ -28,8 +28,9 @@ const CATALOG_ITEM_SCHEMA = {
     price: { type: ["string", "number", "null"] },
     description: { type: ["string", "null"] },
     accessUrl: { type: ["string", "null"] },
+    tags: { type: "array", items: { type: "string" } },
   },
-  required: ["id", "title", "price", "description", "accessUrl"],
+  required: ["id", "title", "price", "description", "accessUrl", "tags"],
 } as const;
 
 export const CATALOG_LIST_OUTPUT_SCHEMA = {
@@ -373,6 +374,25 @@ const ONCHAIN_MUTATION_SUCCESS = {
 export const ONCHAIN_MUTATION_OUTPUT_SCHEMA = {
   type: "object",
   oneOf: [ONCHAIN_MUTATION_SUCCESS, DRY_RUN_SCHEMA, TEXT_RESULT_SCHEMA],
+} as const;
+
+export const FEE_CONFIG_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    source: { type: "string" },
+    configured: { type: "boolean" },
+    platformFeeBps: { type: "integer" },
+    royaltyBps: { type: "integer" },
+    totalFeeBps: { type: "integer" },
+    creatorPayoutBps: { type: "integer" },
+    creatorPayoutPercent: { type: "string" },
+    feeRecipient: { type: ["string", "null"] },
+    message: { type: "string" },
+    contract: {},
+    network: {},
+    rpc: {},
+  },
+  required: ["source", "configured", "contract"],
 } as const;
 
 export const RECOVER_CACHE_OUTPUT_SCHEMA = {

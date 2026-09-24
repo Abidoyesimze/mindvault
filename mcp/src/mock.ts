@@ -386,6 +386,56 @@ export function mockSetListed(resourceId: string, listed: boolean): string {
   );
 }
 
+export function mockFreezeMetadata(resourceId: string): string {
+  return JSON.stringify(
+    {
+      status: "success",
+      resourceId,
+      txHash: `MOCK_TX_FREEZE_METADATA_${resourceId}`,
+      explorerUrl: explorerTxUrl(`MOCK_TX_FREEZE_METADATA_${resourceId}`),
+      source: "on-chain (mock)",
+    },
+    null,
+    2,
+  );
+}
+
+export function mockSetRoyaltyRecipient(
+  resourceId: string,
+  royaltyRecipient: string | null,
+): string {
+  return JSON.stringify(
+    {
+      status: "success",
+      resourceId,
+      royaltyRecipient,
+      txHash: `MOCK_TX_ROYALTY_${resourceId}`,
+      explorerUrl: explorerTxUrl(`MOCK_TX_ROYALTY_${resourceId}`),
+      source: "on-chain (mock)",
+    },
+    null,
+    2,
+  );
+}
+
+export function mockFeeConfig(contractId: string): string {
+  return JSON.stringify(
+    {
+      source: "on-chain (mock)",
+      configured: true,
+      platformFeeBps: 250,
+      royaltyBps: 500,
+      totalFeeBps: 750,
+      creatorPayoutBps: 9250,
+      creatorPayoutPercent: "92.50",
+      feeRecipient: null,
+      contract: contractId,
+    },
+    null,
+    2,
+  );
+}
+
 /**
  * Deterministic mock receipt for buy flows. Returns a purchase receipt object
  * that mirrors the shape of a real x402 payment receipt, with deterministic

@@ -29,6 +29,7 @@ import { applyPreviewLimits, serializePreview } from "./previewLimits.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
+import { Client as DynamicContractClient } from "@stellar/stellar-sdk/contract";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -56,6 +57,9 @@ import {
   mockSetPrice,
   mockTransferOwnership,
   mockSetListed,
+  mockFreezeMetadata,
+  mockSetRoyaltyRecipient,
+  mockFeeConfig,
 } from "./mock.js";
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
@@ -867,6 +871,10 @@ async function getAccountBalances(
 }
 
 function formatResource(r: any): string {
+  const tags = Array.isArray(r.tags) && r.tags.length > 0 ? `\n  Tags: ${r.tags.join(", ")}` : "";
+  if (tags) {
+    return `[${r.id}] ${r.title} - $${r.price} USDC\n  ${r.description ?? ""}${tags}\n  ${r.accessUrl}`;
+  }
   return `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`;
 }
 
@@ -876,6 +884,7 @@ function catalogItemStructured(r: any): {
   price: string | number | null;
   description: string | null;
   accessUrl: string | null;
+  tags: string[];
 } {
   return {
     id: r?.id ?? null,
@@ -883,6 +892,7 @@ function catalogItemStructured(r: any): {
     price: r?.price ?? null,
     description: r?.description ?? null,
     accessUrl: r?.accessUrl ?? null,
+    tags: Array.isArray(r?.tags) ? r.tags.filter((tag: unknown) => typeof tag === "string") : [],
   };
 }
 
@@ -2082,6 +2092,219 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   );
 }
 
+export async function freezeMetadata(resourceId: string, confirm: string): Promise<string> {
+  if (confirm !== "freeze_metadata") {
+    return [
+      "Freeze metadata NOT performed.",
+      "This permanently prevents future metadata updates for the resource.",
+      'To proceed, call mindvault_freeze with confirm: "freeze_metadata".',
+    ].join("\n");
+  }
+
+  const wallet = requireWallet();
+  if (_isMock()) return mockFreezeMetadata(resourceId);
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    publicKey: wallet.publicKey,
+  });
+
+  let tx: Awaited<ReturnType<typeof client.freeze_metadata>>;
+  try {
+    tx = await client.freeze_metadata({ id: resourceId });
+  } catch (err: any) {
+    if (isTimeoutError(err)) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Freeze metadata failed for resource "${resourceId}"`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+    throw mcpError(
+      mapRegistryError({
+        operation: `Freeze metadata failed for resource "${resourceId}"`,
+        message: err?.message || String(err),
+      }),
+    );
+  }
+
+  const result = tx.result;
+  if (result.isErr()) {
+    const err = result.unwrapErr();
+    const notFound = err.message === RegistryErrors[2].message;
+    throw mcpError(
+      mapRegistryError({
+        operation: `Freeze metadata failed for resource "${resourceId}"`,
+        message: err.message,
+        notFound,
+      }),
+    );
+  }
+
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  const keypair = Keypair.fromSecret(wallet.secretKey);
+  let sentTx;
+  try {
+    sentTx = await tx.signAndSend({
+      signTransaction: async (xdr: string) => {
+        const { Transaction } = await import("@stellar/stellar-sdk");
+        const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+        stellarTx.sign(keypair);
+        return { signedTxXdr: stellarTx.toXDR() };
+      },
+    });
+  } catch (err: any) {
+    throw mcpError(
+      mapRegistryError({
+        operation: `Freeze metadata submission failed for resource "${resourceId}"`,
+        message: err?.message || String(err),
+      }),
+    );
+  }
+
+  const txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+  return JSON.stringify({ status: "success", resourceId, txHash }, null, 2);
+}
+
+export async function setRoyaltyRecipient(
+  resourceId: string,
+  royaltyRecipient: string | null,
+): Promise<string> {
+  const wallet = requireWallet();
+  if (_isMock()) return mockSetRoyaltyRecipient(resourceId, royaltyRecipient);
+
+  const client = await DynamicContractClient.from({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    publicKey: wallet.publicKey,
+  });
+
+  let tx: any;
+  try {
+    tx = await (client as any).set_royalty_recipient({
+      id: resourceId,
+      recipient: royaltyRecipient,
+    });
+  } catch (err: any) {
+    if (isTimeoutError(err)) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Set royalty recipient failed for resource "${resourceId}"`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+    throw mcpError(
+      mapRegistryError({
+        operation: `Set royalty recipient failed for resource "${resourceId}"`,
+        message: err?.message || String(err),
+      }),
+    );
+  }
+
+  const result = tx.result;
+  if (result.isErr()) {
+    const err = result.unwrapErr();
+    const notFound = err.message === RegistryErrors[2].message;
+    throw mcpError(
+      mapRegistryError({
+        operation: `Set royalty recipient failed for resource "${resourceId}"`,
+        message: err.message,
+        notFound,
+      }),
+    );
+  }
+
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  const keypair = Keypair.fromSecret(wallet.secretKey);
+  let sentTx;
+  try {
+    sentTx = await tx.signAndSend({
+      signTransaction: async (xdr: string) => {
+        const { Transaction } = await import("@stellar/stellar-sdk");
+        const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+        stellarTx.sign(keypair);
+        return { signedTxXdr: stellarTx.toXDR() };
+      },
+    });
+  } catch (err: any) {
+    throw mcpError(
+      mapRegistryError({
+        operation: `Set royalty recipient submission failed for resource "${resourceId}"`,
+        message: err?.message || String(err),
+      }),
+    );
+  }
+
+  const txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+  return JSON.stringify({ status: "success", resourceId, royaltyRecipient, txHash }, null, 2);
+}
+
+export async function feeConfig(): Promise<string> {
+  if (_isMock()) return mockFeeConfig(REGISTRY_CONTRACT_ID);
+  const client = await DynamicContractClient.from({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let tx: any;
+  try {
+    tx = await (client as any).get_fee_config();
+  } catch (err: any) {
+    throw mcpError(
+      mapTransportError({
+        operation: `Read fee config failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  const config = tx.result ?? null;
+  if (!config) {
+    return JSON.stringify(
+      {
+        source: "on-chain",
+        configured: false,
+        message: "Fee config is not set.",
+        contract: REGISTRY_CONTRACT_ID,
+        network: REGISTRY_NETWORK_PASSPHRASE,
+        rpc: SOROBAN_RPC_URL,
+      },
+      null,
+      2,
+    );
+  }
+
+  const platformFeeBps = Number(config.platform_fee_bps ?? 0);
+  const royaltyBps = Number(config.royalty_bps ?? 0);
+  const totalFeeBps = platformFeeBps + royaltyBps;
+  return JSON.stringify(
+    {
+      source: "on-chain",
+      configured: true,
+      platformFeeBps,
+      royaltyBps,
+      totalFeeBps,
+      creatorPayoutBps: 10_000 - totalFeeBps,
+      creatorPayoutPercent: ((10_000 - totalFeeBps) / 100).toFixed(2),
+      feeRecipient: config.fee_recipient ?? null,
+      contract: REGISTRY_CONTRACT_ID,
+      network: REGISTRY_NETWORK_PASSPHRASE,
+      rpc: SOROBAN_RPC_URL,
+    },
+    null,
+    2,
+  );
+}
+
 export async function registryLookup(resourceId: string): Promise<string> {
   if (_isMock())
     return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
@@ -2516,6 +2739,8 @@ const STATE_MUTATING_TOOLS = new Set([
   "mindvault_transfer_ownership",
   "mindvault_set_listed",
   "mindvault_set_tags",
+  "mindvault_freeze",
+  "mindvault_royalty",
   "mindvault_reset",
   "mindvault_restore_state",
   "mindvault_import_wallet",
@@ -2650,6 +2875,21 @@ async function dispatchToolOutcome(
         );
       case "mindvault_set_listed":
         return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
+      case "mindvault_freeze":
+        return freezeMetadata(
+          requiredString(args, "resourceId"),
+          optionalString(args, "confirm") ?? "",
+        );
+      case "mindvault_fee_config":
+        return feeConfig();
+      case "mindvault_royalty": {
+        const clear = flag(args, "clear");
+        const recipient = optionalString(args, "royaltyRecipient");
+        if (!clear && !recipient) {
+          throw new Error("royaltyRecipient is required unless clear is true.");
+        }
+        return setRoyaltyRecipient(requiredString(args, "resourceId"), clear ? null : recipient!);
+      }
       case "mindvault_tx_status":
         return txStatus(requiredString(args, "txHash"));
       case "mindvault_reset":
