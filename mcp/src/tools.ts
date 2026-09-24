@@ -170,6 +170,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_switch_network_profile",
+    description:
+      "Switch the active wallet profile and Stellar network together, then re-run install verification for the selected network.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Profile name to activate." },
+        network: {
+          type: "string",
+          enum: ["testnet", "mainnet"],
+          description: "Stellar network for this profile.",
+        },
+      },
+      required: ["name", "network"],
+    },
+    annotations: {
+      title: "Switch Network Profile",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_browse",
     description:
       "List resources in the MindVault catalog with the same optional filters as mindvault_search and GET /resources: keyword, price range, verification status, resource type, owner, sort, pagination, tags, and listed state. Sort accepts newest, price_asc, price_desc, or title; results are ordered client-side too, so the order holds even when the backend ignores the parameter.",
@@ -648,7 +671,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_backup_state",
     description:
-      "Export an encrypted backup of ~/.mindvault/state.json for moving agent environments. Requires a passphrase (min 8 chars). Output is a self-contained ciphertext blob — wallet secret keys and API keys never appear in plaintext. Restore with mindvault_restore_state using the same passphrase. Does not change reset behavior.",
+      "Export ~/.mindvault/state.json to a mode-0600 encrypted recovery file after an explicit confirmation step. Requires a passphrase (min 8 chars); wallet secret keys and API keys never appear in plaintext. Restore with mindvault_restore_state using the file contents and same passphrase.",
     inputSchema: {
       type: "object",
       properties: {
@@ -656,11 +679,52 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: "string",
           description: "Passphrase used to encrypt the backup (min 8 characters). Keep it offline.",
         },
+        confirm: {
+          type: "boolean",
+          description:
+            "Required to write the encrypted recovery file. Omitted or false returns a safety preview.",
+        },
       },
       required: ["passphrase"],
     },
     annotations: {
       title: "Back Up State",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_resource_provenance",
+    description:
+      "Return the chronological creator, purchase, and ownership-transfer chain recorded for a resource. Never exposes wallet secrets or API keys.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: { type: "string", description: "Resource identifier to audit." },
+      },
+      required: ["resourceId"],
+    },
+    annotations: {
+      title: "Resource Provenance",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_resource_change_log",
+    description:
+      "Return recent price and metadata changes recorded for a resource in chronological order.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: { type: "string", description: "Resource identifier to inspect." },
+      },
+      required: ["resourceId"],
+    },
+    annotations: {
+      title: "Resource Change Log",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

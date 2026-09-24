@@ -36,6 +36,10 @@ exports[`tool schema snapshots > mindvault_backup_state > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_backup_state > input schema 1`] = `
 {
   "properties": {
+    "confirm": {
+      "description": "Required to write the encrypted recovery file. Omitted or false returns a safety preview.",
+      "type": "boolean",
+    },
     "passphrase": {
       "description": "Passphrase used to encrypt the backup (min 8 characters). Keep it offline.",
       "type": "string",
@@ -1841,6 +1845,58 @@ exports[`tool schema snapshots > mindvault_reset > input schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_reset > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_resource_change_log > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Resource Change Log",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_change_log > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "Resource identifier to inspect.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_change_log > output schema 1`] = `null`;
+
+exports[`tool schema snapshots > mindvault_resource_provenance > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Resource Provenance",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_provenance > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "Resource identifier to audit.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_provenance > output schema 1`] = `null`;
+
 exports[`tool schema snapshots > mindvault_restore_state > annotations 1`] = `
 {
   "destructiveHint": true,
@@ -2476,6 +2532,41 @@ exports[`tool schema snapshots > mindvault_setup_wallet > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_switch_network_profile > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": false,
+  "title": "Switch Network Profile",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_switch_network_profile > input schema 1`] = `
+{
+  "properties": {
+    "name": {
+      "description": "Profile name to activate.",
+      "type": "string",
+    },
+    "network": {
+      "description": "Stellar network for this profile.",
+      "enum": [
+        "testnet",
+        "mainnet",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "name",
+    "network",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_switch_network_profile > output schema 1`] = `null`;
+
 exports[`tool schema snapshots > mindvault_transfer_ownership > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -2995,6 +3086,8 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_registry_list",
   "mindvault_registry_lookup",
   "mindvault_reset",
+  "mindvault_resource_change_log",
+  "mindvault_resource_provenance",
   "mindvault_restore_state",
   "mindvault_rotate_publisher_key",
   "mindvault_search",
@@ -3002,6 +3095,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_set_price",
   "mindvault_set_tags",
   "mindvault_setup_wallet",
+  "mindvault_switch_network_profile",
   "mindvault_transfer_ownership",
   "mindvault_tx_status",
   "mindvault_update_metadata",

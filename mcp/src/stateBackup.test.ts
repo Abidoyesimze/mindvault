@@ -8,11 +8,13 @@ import {
   existsSync,
   readFileSync,
   statSync,
+  mkdtempSync,
 } from "fs";
 import { join } from "path";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import {
   exportState,
+  exportStateFile,
   restoreState,
   StateBackupError,
   readPersistedState,
@@ -79,6 +81,17 @@ describe("stateBackup", () => {
     expect(blob).not.toContain("SBUY");
     expect(blob).not.toContain("api-key-xyz");
     expect(blob).not.toContain("GPUB");
+  });
+
+  it("exports a private encrypted recovery file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "mindvault-backup-"));
+    const path = exportStateFile(PASS, new Date("2026-01-02T03:04:05.000Z"), directory);
+    const contents = readFileSync(path, "utf8");
+    expect(path).toContain("state-2026-01-02T03-04-05-000Z.backup");
+    expect(contents).toMatch(/^v1:/);
+    expect(contents).not.toContain("SSECRET");
+    expect(statSync(path).mode & 0o7777).toBe(0o600);
+    rmSync(path);
   });
 
   it("identifies secrets before an unencrypted persisted-state backup is shared", () => {

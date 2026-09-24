@@ -99,13 +99,14 @@ import { safeErrorMessage, safeLog } from "./redaction.js";
 import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
-  exportState,
+  exportStateFile,
   restoreState,
   checkStatePermissions,
   preserveLegacyState,
   quarantineStateFile,
   writeAtomically,
 } from "./stateBackup.js";
+import { provenanceChain, recordResourceHistory, resourceChangeLog } from "./resourceHistory.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
 import { verifyInstall, formatVerifyInstall } from "./verifyInstall.js";
 import {
@@ -166,17 +167,28 @@ import {
 // unit-tested function so the config path no longer runs as an untestable
 // top-level side effect. The named aliases below keep the rest of this file
 // unchanged.
-const {
-  stellarNetwork: STELLAR_NETWORK,
-  networkPreset,
-  x402Network: NETWORK,
-  baseUrl: BASE_URL,
-  registryContractId: REGISTRY_CONTRACT_ID,
-  registryNetworkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-  sponsoredAccountUrl: SPONSORED_ACCOUNT_URL,
-  horizonUrl: HORIZON_URL,
-  sorobanRpcUrl: SOROBAN_RPC_URL,
-} = buildConfig(process.env);
+const initialConfig = buildConfig(process.env);
+let STELLAR_NETWORK = initialConfig.stellarNetwork;
+let networkPreset = initialConfig.networkPreset;
+let NETWORK = initialConfig.x402Network;
+const BASE_URL = initialConfig.baseUrl;
+let REGISTRY_CONTRACT_ID = initialConfig.registryContractId;
+let REGISTRY_NETWORK_PASSPHRASE = initialConfig.registryNetworkPassphrase;
+const SPONSORED_ACCOUNT_URL = initialConfig.sponsoredAccountUrl;
+let HORIZON_URL = initialConfig.horizonUrl;
+let SOROBAN_RPC_URL = initialConfig.sorobanRpcUrl;
+
+function applyNetworkConfig(network: "testnet" | "mainnet"): void {
+  process.env.STELLAR_NETWORK = network;
+  const next = buildConfig(process.env);
+  STELLAR_NETWORK = next.stellarNetwork;
+  networkPreset = next.networkPreset;
+  NETWORK = next.x402Network;
+  REGISTRY_CONTRACT_ID = next.registryContractId;
+  REGISTRY_NETWORK_PASSPHRASE = next.registryNetworkPassphrase;
+  HORIZON_URL = next.horizonUrl;
+  SOROBAN_RPC_URL = next.sorobanRpcUrl;
+}
 
 // Startup diagnostics: collect every configuration problem in one pass so the
 // operator sees the full list (with exact variable names and expected values)
@@ -281,14 +293,20 @@ function applyRestoredState(state: ProfileState): void {
   saveState();
 }
 
-export function backupState(passphrase: string): string {
-  const blob = exportState(passphrase);
+export function backupState(passphrase: string, confirm: unknown = false): string {
+  if (!isResetConfirmed(confirm)) {
+    return [
+      "Backup NOT performed — confirmation required.",
+      "This will export every wallet secret key and publisher API key in encrypted form.",
+      "To proceed, call mindvault_backup_state again with confirm: true.",
+    ].join("\n");
+  }
+  const path = exportStateFile(passphrase);
   return [
-    "Encrypted state backup ready. Copy the blob below to the new environment.",
-    "Restore with mindvault_restore_state using the same passphrase.",
-    "The blob does not contain plaintext secrets.",
-    "",
-    blob,
+    "Encrypted state backup written.",
+    `File: ${path}`,
+    "The file is mode 0600 and contains no plaintext secrets.",
+    "Restore with mindvault_restore_state using the file contents as blob and the same passphrase.",
   ].join("\n");
 }
 
@@ -1119,6 +1137,20 @@ export function useProfile(nameArg: string): string {
   return outcomeText(useProfileOutcome(nameArg));
 }
 
+export function switchNetworkProfile(name: string, network: "testnet" | "mainnet"): string {
+  if (!isValidProfileName(name)) throw new Error("Invalid profile name.");
+  activeProfileName = name;
+  activeProfile().network = network;
+  applyNetworkConfig(network);
+  saveState();
+  const verification = verifyInstall({ ...process.env, STELLAR_NETWORK: network });
+  return JSON.stringify(
+    { profile: name, network, verification: { ok: verification.ok, checks: verification.checks } },
+    null,
+    2,
+  );
+}
+
 /** List every named profile, marking the active one. Secrets are never shown. */
 function listProfilesOutcome(): ToolOutcome {
   const names = Object.keys(profiles).sort();
@@ -1536,6 +1568,15 @@ async function publish(args: {
     failureGuidance: failureGuidance.length > 0 ? failureGuidance : null,
   };
 
+  recordResourceHistory({
+    resourceId: resource.id,
+    kind: "created",
+    actor: currentWallet()?.publicKey,
+    value: resource.price,
+    txHash: onchainTxHash,
+    network: NETWORK,
+  });
+
   return JSON.stringify(summary, null, 2);
 }
 
@@ -1621,6 +1662,15 @@ export async function buy(
       txHash,
       receiptRef: receipt?.paymentId != null ? String(receipt.paymentId) : null,
       ...(title ? { title } : {}),
+    });
+    recordResourceHistory({
+      resourceId,
+      kind: "purchased",
+      actor: wallet.publicKey,
+      recipient: receipt?.paidTo != null ? String(receipt.paidTo) : undefined,
+      amount,
+      txHash,
+      network: NETWORK,
     });
   } catch (err) {
     console.error("MindVault MCP: failed to persist purchase receipt:", safeErrorMessage(err));
@@ -1831,6 +1881,14 @@ export async function updateMetadata(resourceId: string, metadata: string): Prom
   }
 
   const txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+  recordResourceHistory({
+    resourceId,
+    kind: "metadata",
+    actor: wallet.publicKey,
+    value: metadata,
+    txHash,
+    network: NETWORK,
+  });
   return JSON.stringify(
     {
       status: "success",
@@ -1912,6 +1970,14 @@ export async function setPrice(resourceId: string, price: string): Promise<strin
   }
 
   const txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+  recordResourceHistory({
+    resourceId,
+    kind: "price",
+    actor: wallet.publicKey,
+    value: price,
+    txHash,
+    network: NETWORK,
+  });
   return JSON.stringify(
     {
       status: "success",
@@ -1991,6 +2057,14 @@ export async function transferOwnership(resourceId: string, newCreator: string):
   }
 
   const txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+  recordResourceHistory({
+    resourceId,
+    kind: "transferred",
+    actor: wallet.publicKey,
+    recipient: newCreator,
+    txHash,
+    network: NETWORK,
+  });
   return JSON.stringify(
     {
       status: "success",
@@ -2507,6 +2581,7 @@ function isDispatchableTool(name: string): boolean {
 const STATE_MUTATING_TOOLS = new Set([
   "mindvault_setup_wallet",
   "mindvault_use_profile",
+  "mindvault_switch_network_profile",
   "mindvault_register",
   "mindvault_publish",
   "mindvault_buy",
@@ -2577,6 +2652,11 @@ async function dispatchToolOutcome(
         return walletInfoOutcome();
       case "mindvault_use_profile":
         return useProfileOutcome(requiredString(args, "name"));
+      case "mindvault_switch_network_profile":
+        return switchNetworkProfile(
+          requiredString(args, "name"),
+          requiredString(args, "network") as "testnet" | "mainnet",
+        );
       case "mindvault_list_profiles":
         return listProfilesOutcome();
       case "mindvault_browse": {
@@ -2655,7 +2735,11 @@ async function dispatchToolOutcome(
       case "mindvault_reset":
         return resetState(flag(args, "all"), rawRecord.confirm);
       case "mindvault_backup_state":
-        return backupState(requiredString(args, "passphrase"));
+        return backupState(requiredString(args, "passphrase"), rawRecord.confirm);
+      case "mindvault_resource_provenance":
+        return provenanceChain(requiredString(args, "resourceId"));
+      case "mindvault_resource_change_log":
+        return resourceChangeLog(requiredString(args, "resourceId"));
       case "mindvault_restore_state":
         return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
       case "mindvault_metrics":

@@ -59,6 +59,7 @@ import {
   registerOnchain,
   walletInfo,
   useProfile,
+  switchNetworkProfile,
   listProfiles,
   networkProfile,
   updateMetadata,
@@ -1516,6 +1517,20 @@ describe("multi-wallet profiles", () => {
   it("use_profile rejects invalid names with a deterministic message", () => {
     expect(() => useProfile("has space")).toThrow("Invalid profile name");
     expect(() => useProfile("")).toThrow("Invalid profile name");
+  });
+
+  it("switches the active profile and re-verifies the selected network", () => {
+    try {
+      const result = JSON.parse(switchNetworkProfile("mainnet", "mainnet"));
+      expect(result.profile).toBe("mainnet");
+      expect(result.network).toBe("mainnet");
+      expect(result.verification.checks).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: "STELLAR_NETWORK", ok: true })]),
+      );
+      expect(listProfiles()).toContain("mainnet");
+    } finally {
+      switchNetworkProfile("testnet", "testnet");
+    }
   });
 
   it("keeps wallets isolated per profile", () => {
