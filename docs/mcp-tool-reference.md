@@ -15,7 +15,7 @@ For structured JSON results (`structuredContent` + `outputSchema`) see
 For client installation and configuration see
 [mcp-client-configs.md](mcp-client-configs.md).
 
-**37 tools** as of last generation.
+**40 tools** as of last generation.
 
 ---
 
@@ -102,10 +102,13 @@ For client installation and configuration see
 
 ## Other
 
-| Tool                              | Description                                                                                                                                                                 | Structured |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| `mindvault_recover_catalog_cache` | Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale. | yes        |
+| Tool                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Structured |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `mindvault_prewarm_catalog`       | Fetch the full catalog once to warm the offline catalog fallback cache (see catalogCache.ts). Useful right after connecting a new agent session, or after a cold boot, so a transport failure on the first real mindvault_browse/mindvault_search call falls back to a fresh snapshot instead of having none available. The MCP server also does this automatically once at startup, best-effort; this tool lets an agent trigger it explicitly and see the result.                                | text only  |
+| `mindvault_client_config`         | Emit a copy-paste MCP client config (mirrors docs/mcp-client-configs.md) pre-filled with this server's actual entrypoint path and detected network profile — no placeholder path or env values to hand-edit. Pass client to target one of claude-code, claude-desktop, codex, cursor, vscode, windsurf; omit it to get every supported client.                                                                                                                                                     | text only  |
+| `mindvault_mainnet_banner`        | Session-level explanation of the active network, what paid tools (mindvault_publish, mindvault_buy) and on-chain writes actually cost, and exactly how to confirm a mainnet mutation (confirmMainnet: true, or MINDVAULT_ALLOW_MAINNET=1) — plus the current paid-operation confirmation policy (confirmPaid / MINDVAULT_CONFIRM_PAID_OPERATIONS), when the operator has one configured. Call this once at the start of a session, especially before any paid or destructive operation on mainnet. | text only  |
+| `mindvault_recover_catalog_cache` | Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.                                                                                                                                                                                                                                                                                                                        | yes        |
 
 ---
 
-_This file was generated from `mcp/src/tools.ts` — 37 tools._
+_This file was generated from `mcp/src/tools.ts` — 40 tools._

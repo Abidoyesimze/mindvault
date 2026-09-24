@@ -36,10 +36,14 @@ import { cacheStalenessNotice } from "./cacheStaleness.js";
 import { buildConfig, resolveConfig } from "./config.js";
 import {
   assertMainnetMutationAllowed,
+  formatMainnetBanner,
   formatMainnetDiagnostics,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
-import { assertPaidOperationConfirmed } from "./paidOperations.js";
+import {
+  assertPaidOperationConfirmed,
+  formatPaidConfirmationDiagnostics,
+} from "./paidOperations.js";
 import { assertToolAllowedInReadOnlyMode } from "./readOnlyMode.js";
 import {
   createMetricsRecorder,
@@ -501,6 +505,44 @@ async function registryHealth(): Promise<string> {
   });
   lines.unshift(allOk ? "All dependencies healthy." : "Some dependencies are unhealthy.", "");
   return lines.join("\n");
+}
+
+// ── #882: Catalog cache pre-warm ─────────────────────────────────────────────
+// browseOutcome() already records a fresh snapshot into catalogCache.ts on
+// every successful call and falls back to the last snapshot on a transport
+// failure — but on a genuine cold boot there is no snapshot yet, so the very
+// first failure has nothing to fall back to. This proactively triggers one
+// browse at MCP startup (and on demand via mindvault_prewarm_catalog) so that
+// if the API is unreachable early in a session, the fallback it serves is a
+// fresh one rather than none at all.
+export async function prewarmCatalogCache(): Promise<string> {
+  const startedAt = Date.now();
+  try {
+    await browseOutcome({});
+    const elapsedMs = Date.now() - startedAt;
+    const snapshot = getCatalogSnapshot();
+    const count = snapshot && Array.isArray(snapshot.resources) ? snapshot.resources.length : 0;
+    return `Catalog pre-warmed: ${count} resource(s) cached in ${elapsedMs}ms.`;
+  } catch (err) {
+    return `Catalog pre-warm failed: ${safeErrorMessage(err)}`;
+  }
+}
+
+// ── #878: Mainnet session banner ─────────────────────────────────────────────
+// formatMainnetDiagnostics/formatPaidConfirmationDiagnostics are compact
+// one-liners meant for repeated diagnostic output. This is the fuller,
+// session-level version: a plain-language explanation of the active network
+// and the paid-operation confirmation policy together, meant to be read once
+// when an agent session starts, before it attempts any paid or destructive
+// operation.
+export function mainnetBanner(): string {
+  const banner = formatMainnetBanner({
+    stellarNetwork: STELLAR_NETWORK,
+    x402Network: NETWORK,
+    registryContractId: REGISTRY_CONTRACT_ID,
+    allowMainnetEnv: mainnetAllowedFromEnv(),
+  });
+  return [banner, "", formatPaidConfirmationDiagnostics()].join("\n");
 }
 
 const API_MUTATION_TOOLS = new Set([
@@ -2462,6 +2504,131 @@ export function networkProfile(): string {
   return JSON.stringify(profile, null, 2);
 }
 
+// ── #883: Client config emitter ──────────────────────────────────────────────
+// docs/mcp-client-configs.md documents copy-paste configs per client with a
+// placeholder path and testnet defaults. This mirrors that content
+// programmatically, pre-filled with this running process's actual entrypoint
+// path and whichever environment values were actually detected (so an agent
+// already connected to one client can generate the config for another without
+// hand-editing placeholders).
+
+type ClientConfigId = "claude-code" | "claude-desktop" | "codex" | "cursor" | "vscode" | "windsurf";
+
+const CLIENT_CONFIG_PROFILES: Record<
+  ClientConfigId,
+  { label: string; format: "json" | "toml"; topLevelKey: "mcpServers" | "servers" }
+> = {
+  "claude-code": { label: "Claude Code (.mcp.json)", format: "json", topLevelKey: "mcpServers" },
+  "claude-desktop": {
+    label: "Claude Desktop (claude_desktop_config.json)",
+    format: "json",
+    topLevelKey: "mcpServers",
+  },
+  codex: { label: "Codex (~/.codex/config.toml)", format: "toml", topLevelKey: "mcpServers" },
+  cursor: { label: "Cursor (.cursor/mcp.json)", format: "json", topLevelKey: "mcpServers" },
+  vscode: { label: "VS Code (.vscode/mcp.json)", format: "json", topLevelKey: "servers" },
+  windsurf: {
+    label: "Windsurf (~/.codeium/windsurf/mcp_config.json)",
+    format: "json",
+    topLevelKey: "mcpServers",
+  },
+};
+
+/**
+ * The path this server was actually launched with, when it looks like a real
+ * built entrypoint (ends in mcp/dist/index.js). Falls back to the same
+ * placeholder the docs use when running under a dev/test harness (tsx,
+ * vitest), where process.argv[1] isn't a useful path to hand back to a client.
+ */
+function detectEntrypointPath(): string {
+  const argv1 = process.argv[1];
+  if (argv1 && /mcp[\\/]dist[\\/]index\.js$/.test(argv1)) return argv1;
+  return "/absolute/path/to/mindvault/mcp/dist/index.js";
+}
+
+/** Non-default environment values worth carrying into a generated config. */
+function detectConfigEnv(): Record<string, string> {
+  const env: Record<string, string> = { STELLAR_NETWORK };
+  const passthrough = [
+    "MINDVAULT_URL",
+    "SPONSORED_ACCOUNT_URL",
+    "SOROBAN_RPC_URL",
+    "HORIZON_URL",
+    "USDC_CONTRACT_ID",
+    "VAULT_REGISTRY_CONTRACT_ID",
+    "MINDVAULT_ALLOW_MAINNET",
+  ] as const;
+  for (const key of passthrough) {
+    const value = process.env[key];
+    if (value) env[key] = value;
+  }
+  return env;
+}
+
+function buildClientConfigSnippet(
+  clientId: ClientConfigId,
+  entrypoint: string,
+  env: Record<string, string>,
+): string {
+  const profile = CLIENT_CONFIG_PROFILES[clientId];
+  const serverName = env.STELLAR_NETWORK === "mainnet" ? "mindvault-mainnet" : "mindvault";
+
+  if (profile.format === "toml") {
+    const lines = [`[mcp_servers.${serverName}]`, `command = "node"`, `args = ["${entrypoint}"]`];
+    if (Object.keys(env).length > 0) {
+      lines.push("", `[mcp_servers.${serverName}.env]`);
+      for (const [key, value] of Object.entries(env)) lines.push(`${key} = "${value}"`);
+    }
+    return lines.join("\n");
+  }
+
+  const body: Record<string, unknown> = {
+    ...(clientId === "vscode" ? { type: "stdio" } : {}),
+    command: "node",
+    args: [entrypoint],
+    env,
+  };
+  return JSON.stringify({ [profile.topLevelKey]: { [serverName]: body } }, null, 2);
+}
+
+/**
+ * Emit a copy-paste MCP client config for one client (or every supported
+ * client when omitted), using this server's detected entrypoint path and
+ * network profile instead of the placeholders in docs/mcp-client-configs.md.
+ */
+export function clientConfig(client?: string): string {
+  const entrypoint = detectEntrypointPath();
+  const env = detectConfigEnv();
+
+  if (client !== undefined) {
+    if (!(client in CLIENT_CONFIG_PROFILES)) {
+      const known = Object.keys(CLIENT_CONFIG_PROFILES).join(", ");
+      throw new Error(`Unknown client "${client}". Supported clients: ${known}.`);
+    }
+    const id = client as ClientConfigId;
+    const fence = CLIENT_CONFIG_PROFILES[id].format;
+    return [
+      `## ${CLIENT_CONFIG_PROFILES[id].label}`,
+      "",
+      "```" + fence,
+      buildClientConfigSnippet(id, entrypoint, env),
+      "```",
+    ].join("\n");
+  }
+
+  const sections = (Object.keys(CLIENT_CONFIG_PROFILES) as ClientConfigId[]).map((id) => {
+    const fence = CLIENT_CONFIG_PROFILES[id].format;
+    return [
+      `## ${CLIENT_CONFIG_PROFILES[id].label}`,
+      "",
+      "```" + fence,
+      buildClientConfigSnippet(id, entrypoint, env),
+      "```",
+    ].join("\n");
+  });
+  return sections.join("\n\n");
+}
+
 /**
  * Verify the installed registry-client bindings match the deployed contract's
  * interface. Returns the check's deterministic, agent-safe message.
@@ -2664,6 +2831,12 @@ async function dispatchToolOutcome(
         return checkStatePermissionsTool();
       case "mindvault_registry_health":
         return registryHealth();
+      case "mindvault_prewarm_catalog":
+        return prewarmCatalogCache();
+      case "mindvault_client_config":
+        return clientConfig(optionalString(args, "client"));
+      case "mindvault_mainnet_banner":
+        return mainnetBanner();
       case "mindvault_import_wallet":
         return importWallet({
           secretKey: optionalString(args, "secretKey"),
@@ -2816,6 +2989,13 @@ if (!process.env.VITEST) {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   process.stdin.on("end", () => shutdown("stdin-EOF"));
+
+  // Best-effort catalog cache pre-warm (#882). Fire-and-forget: never blocks
+  // startup and never crashes the process if the API is unreachable — a
+  // failed pre-warm just means the first mindvault_browse pays the normal
+  // cold-cache cost, which is the status quo this is improving on, not a
+  // regression.
+  prewarmCatalogCache().catch(() => {});
 
   await server.connect(transport);
 }

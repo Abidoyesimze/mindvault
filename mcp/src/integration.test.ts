@@ -174,6 +174,47 @@ describe("MCP integration harness", () => {
     expect(harnessResultText(empty)).toMatch(/No on-chain resources in range/);
   });
 
+  it("calls mindvault_prewarm_catalog with mocked catalog fixtures", async () => {
+    const result = await harness.callTool("mindvault_prewarm_catalog");
+    expect(harnessIsToolError(result)).toBe(false);
+    expect(harnessResultText(result)).toContain("Catalog pre-warmed");
+  });
+
+  it("calls mindvault_client_config for a specific client and for every client", async () => {
+    const cursor = await harness.callTool("mindvault_client_config", { client: "cursor" });
+    expect(harnessIsToolError(cursor)).toBe(false);
+    const cursorText = harnessResultText(cursor);
+    expect(cursorText).toContain("## Cursor");
+    expect(cursorText).toContain('"mcpServers"');
+    expect(cursorText).not.toContain("## VS Code");
+
+    const vscode = await harness.callTool("mindvault_client_config", { client: "vscode" });
+    expect(harnessResultText(vscode)).toContain('"servers"');
+
+    const codex = await harness.callTool("mindvault_client_config", { client: "codex" });
+    expect(harnessResultText(codex)).toContain("[mcp_servers.mindvault]");
+
+    const all = await harness.callTool("mindvault_client_config");
+    expect(harnessIsToolError(all)).toBe(false);
+    const allText = harnessResultText(all);
+    for (const heading of [
+      "## Claude Code",
+      "## Claude Desktop",
+      "## Codex",
+      "## Cursor",
+      "## VS Code",
+      "## Windsurf",
+    ]) {
+      expect(allText).toContain(heading);
+    }
+  });
+
+  it("calls mindvault_mainnet_banner and reflects the configured network", async () => {
+    const result = await harness.callTool("mindvault_mainnet_banner");
+    expect(harnessIsToolError(result)).toBe(false);
+    expect(harnessResultText(result)).toContain("testnet");
+  });
+
   it("calls mindvault_recover_catalog_cache and returns guidance", async () => {
     const result = await harness.callTool("mindvault_recover_catalog_cache");
     expect(harnessIsToolError(result)).toBe(false);

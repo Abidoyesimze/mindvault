@@ -397,4 +397,7 @@ export const TEXT_ONLY_TOOLS = [
   "mindvault_register",
   "mindvault_rotate_publisher_key",
   "mindvault_set_tags",
+  "mindvault_prewarm_catalog",
+  "mindvault_client_config",
+  "mindvault_mainnet_banner",
 ] as const;

@@ -19,6 +19,13 @@ pnpm build          # produces mcp/dist/index.js
 Use an **absolute path** everywhere below. Most clients launch the server with
 an unpredictable working directory, so a relative path silently fails to start.
 
+Already connected to the server through one client and want to add it to
+another? Call the `mindvault_client_config` tool (pass `client`, e.g.
+`"cursor"`, or omit it for every client) — it emits the same blocks as this
+page, but pre-filled with this running process's actual entrypoint path and
+detected network profile instead of the placeholder path and testnet
+defaults shown here.
+
 ---
 
 ## Claude Code

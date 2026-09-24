@@ -918,6 +918,54 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_prewarm_catalog",
+    description:
+      "Fetch the full catalog once to warm the offline catalog fallback cache (see catalogCache.ts). Useful right after connecting a new agent session, or after a cold boot, so a transport failure on the first real mindvault_browse/mindvault_search call falls back to a fresh snapshot instead of having none available. The MCP server also does this automatically once at startup, best-effort; this tool lets an agent trigger it explicitly and see the result.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Pre-warm Catalog Cache",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_client_config",
+    description:
+      "Emit a copy-paste MCP client config (mirrors docs/mcp-client-configs.md) pre-filled with this server's actual entrypoint path and detected network profile — no placeholder path or env values to hand-edit. Pass client to target one of claude-code, claude-desktop, codex, cursor, vscode, windsurf; omit it to get every supported client.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        client: {
+          type: "string",
+          enum: ["claude-code", "claude-desktop", "codex", "cursor", "vscode", "windsurf"],
+          description:
+            "Which client's config to emit. Omit to receive a config block for every supported client.",
+          examples: ["claude-code", "cursor", "vscode"],
+        },
+      },
+      required: [],
+    },
+    annotations: {
+      title: "Generate Client Config",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_mainnet_banner",
+    description:
+      "Session-level explanation of the active network, what paid tools (mindvault_publish, mindvault_buy) and on-chain writes actually cost, and exactly how to confirm a mainnet mutation (confirmMainnet: true, or MINDVAULT_ALLOW_MAINNET=1) — plus the current paid-operation confirmation policy (confirmPaid / MINDVAULT_CONFIRM_PAID_OPERATIONS), when the operator has one configured. Call this once at the start of a session, especially before any paid or destructive operation on mainnet.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Mainnet Session Banner",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_import_wallet",
     description:
       "Import an existing Stellar wallet by providing a secret key (or reading MINDVAULT_AGENT_SECRET from the environment). Validates the key, optionally persists it to the active profile (or a named profile), and never logs the secret. Use this to restore a wallet from backup or connect to an existing identity.",

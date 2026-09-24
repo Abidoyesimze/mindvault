@@ -499,6 +499,43 @@ exports[`tool schema snapshots > mindvault_check_state_permissions > input schem
 
 exports[`tool schema snapshots > mindvault_check_state_permissions > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_client_config > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Generate Client Config",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_client_config > input schema 1`] = `
+{
+  "properties": {
+    "client": {
+      "description": "Which client's config to emit. Omit to receive a config block for every supported client.",
+      "enum": [
+        "claude-code",
+        "claude-desktop",
+        "codex",
+        "cursor",
+        "vscode",
+        "windsurf",
+      ],
+      "examples": [
+        "claude-code",
+        "cursor",
+        "vscode",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_client_config > output schema 1`] = `null`;
+
 exports[`tool schema snapshots > mindvault_export_receipts > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -850,6 +887,25 @@ exports[`tool schema snapshots > mindvault_list_profiles > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_mainnet_banner > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Mainnet Session Banner",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_mainnet_banner > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_mainnet_banner > output schema 1`] = `null`;
+
 exports[`tool schema snapshots > mindvault_metrics > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -1027,6 +1083,25 @@ exports[`tool schema snapshots > mindvault_preview > output schema 1`] = `
   "type": "object",
 }
 `;
+
+exports[`tool schema snapshots > mindvault_prewarm_catalog > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Pre-warm Catalog Cache",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_prewarm_catalog > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_prewarm_catalog > output schema 1`] = `null`;
 
 exports[`tool schema snapshots > mindvault_publish > annotations 1`] = `
 {
@@ -2978,12 +3053,15 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_check_bindings",
   "mindvault_check_consistency",
   "mindvault_check_state_permissions",
+  "mindvault_client_config",
   "mindvault_export_receipts",
   "mindvault_import_wallet",
   "mindvault_list_profiles",
+  "mindvault_mainnet_banner",
   "mindvault_metrics",
   "mindvault_network_profile",
   "mindvault_preview",
+  "mindvault_prewarm_catalog",
   "mindvault_publish",
   "mindvault_publish_status",
   "mindvault_purchase_history",

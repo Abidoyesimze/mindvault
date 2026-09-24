@@ -318,6 +318,14 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   },
   mindvault_check_state_permissions: {},
   mindvault_registry_health: {},
+  mindvault_prewarm_catalog: {},
+  mindvault_client_config: {
+    client: {
+      kind: "enum",
+      values: ["claude-code", "claude-desktop", "codex", "cursor", "vscode", "windsurf"],
+    },
+  },
+  mindvault_mainnet_banner: {},
   mindvault_import_wallet: {
     secretKey: {
       kind: "string",

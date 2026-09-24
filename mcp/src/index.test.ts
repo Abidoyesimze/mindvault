@@ -65,6 +65,9 @@ import {
   setPrice,
   transferOwnership,
   setListed,
+  prewarmCatalogCache,
+  clientConfig,
+  mainnetBanner,
   _setAgentWallet,
   _setAgentApiKey,
   _resetProfiles,
@@ -167,6 +170,97 @@ describe("browse", () => {
         headers: expect.objectContaining({ "Content-Type": "application/json" }),
       }),
     );
+  });
+});
+
+describe("prewarmCatalogCache", () => {
+  beforeEach(() => {
+    _clearCatalogCache();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    _clearCatalogCache();
+  });
+
+  it("reports the resource count and populates the catalog cache", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(mockResponse(sampleResources)),
+    );
+    const result = await prewarmCatalogCache();
+    expect(result).toContain("Catalog pre-warmed");
+    expect(result).toContain("2 resource(s)");
+
+    // The offline fallback cache should now be warm — a subsequent transport
+    // failure falls back to it rather than throwing outright.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network error"));
+    const fallback = await browse();
+    expect(fallback).toContain("res-001");
+    expect(fallback).toMatch(/Offline catalog snapshot served/);
+  });
+
+  it("never throws on a server error — reports it in the return value instead", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(mockResponse({ error: "Internal server error" }, false, 503)),
+    );
+    const result = await prewarmCatalogCache();
+    expect(result).toContain("Catalog pre-warm failed");
+  });
+
+  it("never throws on a network failure — reports it in the return value instead", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network error"));
+    const result = await prewarmCatalogCache();
+    expect(result).toContain("Catalog pre-warm failed");
+  });
+});
+
+describe("clientConfig", () => {
+  it("defaults to a placeholder path and testnet under the test harness", () => {
+    const result = clientConfig("cursor");
+    expect(result).toContain("/absolute/path/to/mindvault/mcp/dist/index.js");
+    expect(result).toContain('"STELLAR_NETWORK": "testnet"');
+  });
+
+  it("uses the servers key (not mcpServers) for vscode", () => {
+    const result = clientConfig("vscode");
+    const parsed = JSON.parse(result.replace(/^## .*\n\n```json\n/, "").replace(/\n```$/, ""));
+    expect(parsed.servers).toBeDefined();
+    expect(parsed.mcpServers).toBeUndefined();
+    expect(parsed.servers.mindvault.type).toBe("stdio");
+  });
+
+  it("emits TOML for codex", () => {
+    const result = clientConfig("codex");
+    expect(result).toContain("[mcp_servers.mindvault]");
+    expect(result).toContain('command = "node"');
+    expect(result).not.toContain("{");
+  });
+
+  it("rejects an unknown client name", () => {
+    expect(() => clientConfig("not-a-real-client")).toThrow(/Unknown client/);
+  });
+
+  it("returns every client's section when none is specified", () => {
+    const result = clientConfig();
+    for (const heading of [
+      "## Claude Code",
+      "## Claude Desktop",
+      "## Codex",
+      "## Cursor",
+      "## VS Code",
+      "## Windsurf",
+    ]) {
+      expect(result).toContain(heading);
+    }
+  });
+});
+
+describe("mainnetBanner", () => {
+  it("reflects testnet by default and mentions the paid-confirmation policy", () => {
+    const result = mainnetBanner();
+    expect(result).toContain("testnet");
+    expect(result).toContain("not real funds");
+    expect(result).toContain("Paid-operation confirmation:");
   });
 });
 
