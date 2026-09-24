@@ -204,6 +204,7 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `get_attestation_hash(id)`                                                   | —                                                        | `id: String`                                                                                                                                                                                                                                         | `Option<String>`                       | Fetch the optional off-chain attestation hash recorded for a resource.                                                                                                                                                                                                                                  |
 | `add_verifier(verifier)`                                                     | `admin`                                                  | `verifier: Address`                                                                                                                                                                                                                                  | `Result<(), Error>`                    | Grant the verifier role, authorizing `set_verification_status`. Errors `AdminNotSet` if no admin has been set yet.                                                                                                                                                                                       |
 | `remove_verifier(verifier)`                                                  | `admin`                                                  | `verifier: Address`                                                                                                                                                                                                                                  | `Result<(), Error>`                    | Revoke the verifier role.                                                                                                                                                                                                                                                                                |
+| `rotate_verifier(old_verifier, new_verifier)`                              | `admin`                                                  | `old_verifier: Address`; `new_verifier: Address`                                                                                                                                                                                                      | `Result<(), Error>`                    | Atomically replace a registered verifier with a new key. Rejects an unregistered old key, an already-registered new key, and same-key rotation. Emits `verrot` with both keys and the ledger sequence.                                                                 |
 | `is_verifier(address)`                                                       | —                                                        | `address: Address`                                                                                                                                                                                                                                   | `bool`                                 | Whether `address` currently holds the verifier role.                                                                                                                                                                                                                                                     |
 | `add_moderator(moderator)`                                                   | `admin`                                                  | `moderator: Address`                                                                                                                                                                                                                                 | `Result<(), Error>`                    | Grant the moderator role, authorizing `flag_resource` and `unflag_resource`. Errors `AdminNotSet` if no admin has been set yet.                                                                                                                                                                          |
 | `remove_moderator(moderator)`                                                | `admin`                                                  | `moderator: Address`                                                                                                                                                                                                                                 | `Result<(), Error>`                    | Revoke the moderator role.                                                                                                                                                                                                                                                                               |
@@ -238,7 +239,7 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 
 Three roles sit alongside the per-resource `creator` and the pre-existing admin:
 
-- **admin** — set via `nominate_new_admin` (see above). Can grant/revoke the verifier role (`add_verifier`/`remove_verifier`), repair the pagination index (`repair_index`) or tag index (`repair_tag_index`), and set the registry fee config (`set_fee_config`). Cannot mutate any resource's price, metadata, listing, tags, or ownership.
+- **admin** — set via `nominate_new_admin` (see above). Can grant/revoke or rotate the verifier role (`add_verifier`/`remove_verifier`/`rotate_verifier`), repair the pagination index (`repair_index`) or tag index (`repair_tag_index`), and set the registry fee config (`set_fee_config`). Cannot mutate any resource's price, metadata, listing, tags, or ownership.
 - **verifier** — zero or more addresses granted by the admin. Can call `set_verification_status` and `anchor_purchase_receipt`. Cannot touch price, metadata, listing, tags, ownership, or the admin/verifier role list itself.
 
 ### Role management flows
@@ -286,6 +287,29 @@ Admin ──remove_verifier(V)─► Verifier(V) = false
 - **Events**: `addverif` / `rmverif`.
 - Multiple verifiers may be active simultaneously.
 - `is_verifier(address)` is a public read-only query; no auth required.
+
+#### Verifier key rotation
+
+When a verifier key is compromised, the admin should use one auditable call
+instead of an untracked remove-then-add pair:
+
+```
+Admin ──rotate_verifier(old_verifier, new_verifier)──► old = false, new = true
+```
+
+- **Auth**: Only the current admin may call it, using the same authorization
+  check as `add_verifier` and `remove_verifier`; a non-admin caller is rejected
+  before any state changes. `AdminNotSet` is returned if no admin exists.
+- **Validation**: The old verifier must currently be registered (`NotFound`),
+  and the new verifier must be different and unregistered (`AlreadyRegistered`).
+  All checks run before either role is changed.
+- **Events**: A successful rotation emits `rmverif`, `addverif`, and `verrot`.
+  The `verrot` payload is `VerifierRotation { old_verifier, new_verifier,
+  ledger }`, where `ledger` is the on-chain ledger sequence.
+- **Atomicity**: Soroban commits both role changes and the audit event together;
+  any failed validation or authorization reverts the whole call, leaving no
+  partial verifier-set change. Routine independent `add_verifier` and
+  `remove_verifier` calls remain available but do not emit `verrot`.
 
 #### Verification status update
 
@@ -391,8 +415,8 @@ if (page.next_cursor !== null) {
 
 | Code | Error                           | Description                                                                             |
 | ---- | ------------------------------- | --------------------------------------------------------------------------------------- |
-| `1`  | `AlreadyRegistered`             | A resource with the given `id` already exists.                                          |
-| `2`  | `NotFound`                      | No resource (or terms hash or receipt) matches the given key.                           |
+| `1`  | `AlreadyRegistered`             | A resource with the given `id` or the target verifier already exists.                  |
+| `2`  | `NotFound`                      | No resource (or terms hash, receipt, or old verifier) matches the given key.            |
 | `3`  | `InvalidPrice`                  | Price is `<= 0`.                                                                        |
 | `4`  | `MetadataTooLong`               | Metadata pointer exceeds `MAX_METADATA_POINTER_LEN` (512 bytes).                        |
 | `5`  | `InvalidTag`                    | Tag validation failed (too many tags, empty/overlong tag, or duplicate normalized tag). |
@@ -408,7 +432,7 @@ if (page.next_cursor !== null) {
 | `15` | `NoPendingTransfer`             | No pending transfer exists for this resource.                                           |
 | `16` | `ReservedId`                    | Resource id collides with a reserved word (e.g. `admin`, `registry`).                   |
 | `17` | `PriceExceedsMax`               | Price exceeds `MAX_PRICE`.                                                              |
-| `18` | `AdminNotSet`                   | No admin has been set yet (`nominate_new_admin` never called).                          |
+| `18` | `AdminNotSet`                   | No admin has been set yet (`nominate_new_admin` never called), including verifier role operations. |
 | `19` | `NotVerifier`                   | Caller does not hold the verifier role.                                                 |
 | `20` | `InvalidVerificationTransition` | Verification status transition is not allowed (self-transition or revert to `Pending`). |
 | `21` | `AlreadyFrozen`                 | `freeze_metadata` was already called on this resource.                                  |
@@ -504,6 +528,7 @@ apart, so update all three together.
 | `verify`    | `(old_status: VerificationStatus, new_status: VerificationStatus)`                       | `set_verification_status()` succeeds                       |
 | `addverif`  | `true`                                                                                   | `add_verifier()` succeeds                                  |
 | `rmverif`   | `false`                                                                                  | `remove_verifier()` succeeds                               |
+| `verrot`    | `VerifierRotation { old_verifier, new_verifier, ledger }`                               | `rotate_verifier()` succeeds                               |
 | `reindex`   | `new_count: u32 (topic carries old_count: u32)`                                          | `repair_index()` succeeds                                  |
 | `payment`   | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }` | `record_payment()` succeeds                                |
 | `settle`    | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }` | `settle_payment()` succeeds                                |
@@ -764,9 +789,22 @@ CONTRACT_WASM=contract/target/wasm32v1-none/release/vault_registry.wasm pnpm con
 
 ### Develop
 
+From the repository root, run the contract tests with:
+
 ```bash
-cargo test                                           # run unit tests
-stellar contract build --manifest-path Cargo.toml    # build wasm
+cd contract && cargo test
+```
+
+The package-level build-and-test command is:
+
+```bash
+cd contract/contracts/vault-registry && make test
+```
+
+To build the WASM directly:
+
+```bash
+cd contract && stellar contract build --manifest-path Cargo.toml
 ```
 
 ### Deploy (testnet)

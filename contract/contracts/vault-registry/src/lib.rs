@@ -127,6 +127,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Verification ──────────────────────────────────────────────────────
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
+    ("rotate_verifier", "admin"),
     ("is_verifier", "—"),
     ("set_verification_status", "verifier"),
     ("get_attestation_hash", "—"),
@@ -189,8 +190,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
 /// between code, this const, and the README fails a test.
 #[cfg(test)]
 pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
-    (1, "AlreadyRegistered", "A resource with the given `id` already exists."),
-    (2, "NotFound", "No resource (or terms hash or receipt) matches the given key."),
+    (1, "AlreadyRegistered", "A resource with the given `id` or the target verifier already exists."),
+    (2, "NotFound", "No resource (or terms hash, receipt, or old verifier) matches the given key."),
     (3, "InvalidPrice", "Price is `<= 0`."),
     (4, "MetadataTooLong", "Metadata pointer exceeds `MAX_METADATA_POINTER_LEN` (512 bytes)."),
     (5, "InvalidTag", "Tag validation failed (too many tags, empty tag, tag exceeds 32 bytes, or duplicate normalized tag)."),
@@ -206,7 +207,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (15, "NoPendingTransfer", "No pending transfer exists for this resource."),
     (16, "ReservedId", "Resource id collides with a reserved word (e.g. `admin`, `registry`)."),
     (17, "PriceExceedsMax", "Price exceeds `MAX_PRICE`."),
-    (18, "AdminNotSet", "`add_verifier`, `remove_verifier`, or `repair_index` was called before any admin was bootstrapped."),
+    (18, "AdminNotSet", "`add_verifier`, `remove_verifier`, `rotate_verifier`, or `repair_index` was called before any admin was bootstrapped."),
     (19, "NotVerifier", "`set_verification_status` was called by an address that does not hold the verifier role."),
     (20, "InvalidVerificationTransition", "The requested `VerificationStatus` transition is not allowed (e.g. same-status no-op, or reverting to `Pending`)."),
     (21, "AlreadyFrozen", "`freeze_metadata` was called on a resource whose metadata is already frozen."),
@@ -281,6 +282,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ),
     ("addverif", "true"),
     ("rmverif", "false"),
+    ("verrot", "VerifierRotation { old_verifier, new_verifier, ledger }"),
     ("reindex", "new_count: u32 (topic carries old_count: u32)"),
     (
         "payment",
@@ -413,6 +415,14 @@ pub struct FlagEvent {
     pub id: String,
     pub moderator: Address,
     pub reason: FlagReason,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerifierRotation {
+    pub old_verifier: Address,
+    pub new_verifier: Address,
+    pub ledger: u32,
 }
 
 #[contracttype]
@@ -2008,12 +2018,7 @@ impl VaultRegistry {
     pub fn add_verifier(env: Env, verifier: Address) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::Verifier(verifier.clone()), &true);
-        Self::bump_instance(&env);
-        env.events()
-            .publish((symbol_short!("addverif"), verifier), true);
+        Self::add_verifier_internal(&env, verifier);
         Ok(())
     }
 
@@ -2021,12 +2026,38 @@ impl VaultRegistry {
     pub fn remove_verifier(env: Env, verifier: Address) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::Verifier(verifier.clone()), &false);
-        Self::bump_instance(&env);
-        env.events()
-            .publish((symbol_short!("rmverif"), verifier), false);
+        Self::remove_verifier_internal(&env, verifier);
+        Ok(())
+    }
+
+    pub fn rotate_verifier(
+        env: Env,
+        old_verifier: Address,
+        new_verifier: Address,
+    ) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+
+        if old_verifier == new_verifier {
+            return Err(Error::AlreadyRegistered);
+        }
+        if !Self::is_verifier(env.clone(), old_verifier.clone()) {
+            return Err(Error::NotFound);
+        }
+        if Self::is_verifier(env.clone(), new_verifier.clone()) {
+            return Err(Error::AlreadyRegistered);
+        }
+
+        Self::remove_verifier_internal(&env, old_verifier.clone());
+        Self::add_verifier_internal(&env, new_verifier.clone());
+        env.events().publish(
+            (symbol_short!("verrot"), old_verifier.clone()),
+            VerifierRotation {
+                old_verifier,
+                new_verifier,
+                ledger: env.ledger().sequence(),
+            },
+        );
         Ok(())
     }
 
@@ -3055,6 +3086,24 @@ impl VaultRegistry {
             .instance()
             .set(&DataKey::CreatorCount(creator.clone()), &value);
         Self::bump_instance(env);
+    }
+
+    fn add_verifier_internal(env: &Env, verifier: Address) {
+        env.storage()
+            .instance()
+            .set(&DataKey::Verifier(verifier.clone()), &true);
+        Self::bump_instance(env);
+        env.events()
+            .publish((symbol_short!("addverif"), verifier), true);
+    }
+
+    fn remove_verifier_internal(env: &Env, verifier: Address) {
+        env.storage()
+            .instance()
+            .set(&DataKey::Verifier(verifier.clone()), &false);
+        Self::bump_instance(env);
+        env.events()
+            .publish((symbol_short!("rmverif"), verifier), false);
     }
 
     /// The current admin, or `AdminNotSet` if `nominate_new_admin` has never
