@@ -12,7 +12,10 @@ import {
   getPreviewSnapshot,
   recordCatalogSnapshot,
   recordPreviewSnapshot,
+  type CatalogFallbackReason,
 } from "../catalogCache.js";
+import { isRetryableStatus } from "../retry.js";
+import { mappedErrorOf } from "../errorMapping.js";
 import { cacheStalenessNotice } from "../cacheStaleness.js";
 import { mapHttpError, mcpError, throwHttpError } from "../errorMapping.js";
 import { truncateResponse } from "../truncation.js";
@@ -25,25 +28,46 @@ interface CatalogLoad {
   fromCache: boolean;
 }
 
+/**
+ * Whether a failed catalog read should fall back to the offline snapshot (#837).
+ *
+ * Only a catalog that could not answer: a transport failure, or a transient
+ * server/throttling status that survived the retry layer's replays. A 4xx is
+ * the service answering about this request, and must reach the agent instead of
+ * being papered over with stale data labelled "API unreachable".
+ */
+function catalogFallbackFor(err: unknown): CatalogFallbackReason | null {
+  const mapped = mappedErrorOf(err);
+  if (!mapped) return { kind: "unreachable" };
+  if (mapped.status === undefined) {
+    return mapped.category === "network" || mapped.category === "timeout"
+      ? { kind: "unreachable" }
+      : null;
+  }
+  return isRetryableStatus(mapped.status) ? { kind: "status", status: mapped.status } : null;
+}
+
 async function loadCatalog(url: string, operation: string): Promise<CatalogLoad> {
-  let res;
   try {
-    res = await jsonFetch(url);
+    const res = await jsonFetch(url);
+    if (!res.ok) {
+      throw mcpError(
+        mapHttpError({ operation, source: "api", status: res.status, data: res.data }),
+      );
+    }
+    const items = Array.isArray(res.data) ? res.data : [];
+    recordCatalogSnapshot(items);
+    return { items, notice: cacheStalenessNotice(res.headers), fromCache: false };
   } catch (err) {
-    const snapshot = getCatalogSnapshot();
-    if (!snapshot) throw err;
+    const reason = catalogFallbackFor(err);
+    const snapshot = reason ? getCatalogSnapshot() : null;
+    if (!snapshot || !reason) throw err;
     return {
       items: Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [],
-      notice: catalogCacheLabel(snapshot.savedAtMs),
+      notice: catalogCacheLabel(snapshot.savedAtMs, Date.now(), reason),
       fromCache: true,
     };
   }
-  if (!res.ok) {
-    throw mcpError(mapHttpError({ operation, source: "api", status: res.status, data: res.data }));
-  }
-  const items = Array.isArray(res.data) ? res.data : [];
-  recordCatalogSnapshot(items);
-  return { items, notice: cacheStalenessNotice(res.headers), fromCache: false };
 }
 
 export async function browse(filters: CatalogFilters = {}): Promise<string> {
@@ -111,9 +135,10 @@ async function previewData(resourceId: string): Promise<{ r: any; label: string 
     recordPreviewSnapshot(resourceId, res.data);
     return { r: res.data, label: null };
   } catch (err) {
-    const snap = getPreviewSnapshot(resourceId);
-    if (!snap) throw err;
-    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs) };
+    const reason = catalogFallbackFor(err);
+    const snap = reason ? getPreviewSnapshot(resourceId) : null;
+    if (!snap || !reason) throw err;
+    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs, Date.now(), reason) };
   }
 }
 

@@ -154,6 +154,7 @@ import {
 } from "./catalogFilters.js";
 import {
   catalogCacheLabel,
+  type CatalogFallbackReason,
   getCatalogSnapshot,
   getPreviewSnapshot,
   recordCatalogSnapshot,
@@ -1151,6 +1152,45 @@ export function listProfiles(): string {
   return outcomeText(listProfilesOutcome());
 }
 
+/**
+ * Whether a failed catalog read should fall back to the offline snapshot (#837).
+ *
+ * The cache exists for one situation: the catalog could not answer. A transport
+ * failure is that situation, and so is a transient server or throttling status
+ * once the retry layer has exhausted its attempts — `jsonFetch` already replays
+ * idempotent GETs on 408/425/429/5xx, so reaching this point means the gateway
+ * stayed broken.
+ *
+ * Everything else is the service answering, and answering about *this request*:
+ * a 400 on a malformed filter, a 404, a 401. Serving a snapshot for those hides
+ * a fixable client error behind stale data labelled "API unreachable", and the
+ * agent repeats the bad request against a cache that will never reflect it. So
+ * those propagate.
+ */
+function catalogFallbackFor(err: unknown): CatalogFallbackReason | null {
+  const mapped = mappedErrorOf(err);
+  if (!mapped) return { kind: "unreachable" };
+  if (mapped.status === undefined) {
+    // Transport-level: classified as network or timeout, never a status.
+    return mapped.category === "network" || mapped.category === "timeout"
+      ? { kind: "unreachable" }
+      : null;
+  }
+  return isRetryableStatus(mapped.status) ? { kind: "status", status: mapped.status } : null;
+}
+
+/** Resolve a failed catalog read to a snapshot, or rethrow when it must surface. */
+function catalogSnapshotFor(err: unknown): { resources: unknown[]; notice: string } | null {
+  const reason = catalogFallbackFor(err);
+  if (!reason) return null;
+  const snapshot = getCatalogSnapshot();
+  if (!snapshot) return null;
+  return {
+    resources: snapshot.resources,
+    notice: catalogCacheLabel(snapshot.savedAtMs, Date.now(), reason),
+  };
+}
+
 async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome> {
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
@@ -1172,10 +1212,10 @@ async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome>
     recordCatalogSnapshot(raw);
     notice = cacheStalenessNotice(res.headers);
   } catch (err) {
-    const snapshot = getCatalogSnapshot();
-    if (!snapshot) throw err;
-    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
-    notice = catalogCacheLabel(snapshot.savedAtMs);
+    const fallback = catalogSnapshotFor(err);
+    if (!fallback) throw err;
+    raw = Array.isArray(fallback.resources) ? (fallback.resources as any[]) : [];
+    notice = fallback.notice;
   }
   const items: any[] = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
@@ -1239,10 +1279,10 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
     recordCatalogSnapshot(raw);
     notice = cacheStalenessNotice(res.headers);
   } catch (err) {
-    const snapshot = getCatalogSnapshot();
-    if (!snapshot) throw err;
-    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
-    notice = catalogCacheLabel(snapshot.savedAtMs);
+    const fallback = catalogSnapshotFor(err);
+    if (!fallback) throw err;
+    raw = Array.isArray(fallback.resources) ? (fallback.resources as any[]) : [];
+    notice = fallback.notice;
   }
 
   // Client-side keyword / tags / listed / skipped for unit-test compatibility
@@ -1278,10 +1318,12 @@ async function previewData(resourceId: string): Promise<{ r: any; label: string 
     recordPreviewSnapshot(resourceId, res.data);
     return { r: res.data, label: null };
   } catch (err) {
-    const snap = getPreviewSnapshot(resourceId);
-    // No cached snapshot for this resource — surface the original error.
-    if (!snap) throw err;
-    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs) };
+    // Same rule as browse/search: a snapshot answers for a catalog that could
+    // not answer, never for a 404 on an id the agent got wrong (#837).
+    const reason = catalogFallbackFor(err);
+    const snap = reason ? getPreviewSnapshot(resourceId) : null;
+    if (!snap || !reason) throw err;
+    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs, Date.now(), reason) };
   }
 }
 

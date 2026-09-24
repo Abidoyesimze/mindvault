@@ -2214,6 +2214,82 @@ describe("offline catalog cache fallback (#556)", () => {
     expect(parsed.offlineCache).toContain("Offline catalog snapshot served");
   });
 
+  it("serves the snapshot for a gateway error the retry layer could not ride out", async () => {
+    // 502/503/504 mean the catalog could not answer — exactly what the offline
+    // snapshot is for. The label names the status rather than claiming the API
+    // was unreachable (#837).
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ error: "bad gateway" }, false, 502),
+    );
+
+    const out = await browse();
+    expect(out).toContain("[c1] Cached One");
+    expect(out).toContain("Offline catalog snapshot served");
+    expect(out).toContain("HTTP 502");
+    expect(out).not.toContain("unreachable");
+  });
+
+  it("serves the snapshot when the catalog is rate limited", async () => {
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ error: "slow down" }, false, 429),
+    );
+
+    const out = await browse();
+    expect(out).toContain("[c1] Cached One");
+    expect(out).toContain("HTTP 429");
+  });
+
+  it("surfaces a client error instead of hiding it behind the cache", async () => {
+    // A 400 is the catalog answering about this request. Serving a snapshot
+    // would tell the agent the API is unreachable and leave it repeating an
+    // invalid call against data that can never reflect it (#837).
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ error: "minPrice must be numeric" }, false, 400),
+    );
+
+    await expect(browse()).rejects.toThrow(/minPrice must be numeric/);
+  });
+
+  it("surfaces an auth error rather than serving the cache", async () => {
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ error: "forbidden" }, false, 403),
+    );
+
+    await expect(search("Cached")).rejects.toThrow(/forbidden/);
+  });
+
+  it("surfaces a 404 on preview instead of returning another resource's snapshot", async () => {
+    recordPreviewSnapshot("res-9", { id: "res-9", title: "Cached Preview", price: "4" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ error: "not found" }, false, 404),
+    );
+
+    await expect(preview("res-9")).rejects.toThrow(/not found/);
+  });
+
+  it("serves the cached preview when the catalog answers 503", async () => {
+    recordPreviewSnapshot("res-9", {
+      id: "res-9",
+      title: "Cached Preview",
+      price: "4",
+      description: "D",
+      resourceType: "article",
+      verificationStatus: "verified",
+      accessUrl: "https://example.com/9",
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ error: "unavailable" }, false, 503),
+    );
+
+    const parsed = JSON.parse(await preview("res-9"));
+    expect(parsed.title).toBe("Cached Preview");
+    expect(parsed.offlineCache).toContain("HTTP 503");
+  });
+
   it("rethrows the deterministic reachability error when there is no cache", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED: Connection refused"));
     await expect(browse()).rejects.toThrow();
