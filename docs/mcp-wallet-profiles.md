@@ -44,6 +44,22 @@ mindvault_restore_state {
 
 Unit coverage: [`mcp/src/stateBackup.test.ts`](../mcp/src/stateBackup.test.ts).
 
+## Wallet integrity
+
+A profile's wallet is only usable if the secret key it stores derives the address
+it stores. That is checked at both boundaries where a keypair can enter:
+
+- `mindvault_setup_wallet` verifies the sponsored-account service's response
+  before persisting, so a half-completed creation cannot leave a funded address
+  the keystore does not own (#839, see
+  [mcp-error-reference.md](mcp-error-reference.md#half-completed-creation-839)).
+- `mindvault_wallet_info` re-checks the stored keypair and adds a `⚠ Keystore:`
+  line — and `ownsAddress: false` in its structured output — when they disagree,
+  so a balance for an unsignable address never reads as spendable funds.
+
+`mindvault_import_wallet` derives the address from the secret it is given, so an
+imported wallet is consistent by construction.
+
 ## Reset confirmation guard
 
 `mindvault_reset` deletes wallet secret keys and publisher API keys. They are

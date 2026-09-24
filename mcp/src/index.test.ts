@@ -74,6 +74,7 @@ import {
   recordPreviewSnapshot,
   _clearCatalogCache,
 } from "./catalogCache.js";
+import { Keypair } from "@stellar/stellar-sdk";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
@@ -2095,10 +2096,127 @@ describe("API health preflight before mutation tools (#603)", () => {
   });
 });
 
+// ── half-completed sponsored-account creation (#839) ────────────────────────
+
+describe("setupWallet – half-completed sponsored creation", () => {
+  const sponsored = Keypair.random();
+  const other = Keypair.random();
+
+  beforeEach(() => {
+    // Earlier suites stub @stellar/stellar-sdk with vi.doMock, which
+    // restoreAllMocks does not undo. Key derivation must be the real thing here.
+    vi.doUnmock("@stellar/stellar-sdk");
+    _resetProfiles();
+  });
+
+  afterEach(() => {
+    _resetProfiles();
+    vi.restoreAllMocks();
+  });
+
+  it("persists a wallet whose secret derives the address it was given", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: sponsored.publicKey(), secretKey: sponsored.secret() }),
+    );
+
+    const out = await dispatchTool("mindvault_setup_wallet", {});
+    expect(out).toContain("Wallet created.");
+    expect(out).toContain(`Address: ${sponsored.publicKey()}`);
+    expect(out).toContain("persisted");
+  });
+
+  it("refuses a funded address that arrives without its secret key", async () => {
+    // The shape a creation that funds the account and then times out leaves:
+    // the agent would otherwise hold an address it can never sign for.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: sponsored.publicKey() }),
+    );
+
+    await expect(dispatchTool("mindvault_setup_wallet", {})).rejects.toThrow(
+      /no secret key|cannot sign/i,
+    );
+  });
+
+  it("refuses a secret key belonging to a different account", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: sponsored.publicKey(), secretKey: other.secret() }),
+    );
+
+    await expect(dispatchTool("mindvault_setup_wallet", {})).rejects.toThrow(/belongs to/i);
+  });
+
+  it("explains that nothing was persisted and a funded account may be orphaned", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: sponsored.publicKey(), secretKey: "" }),
+    );
+
+    try {
+      await dispatchTool("mindvault_setup_wallet", {});
+      throw new Error("expected setup_wallet to reject");
+    } catch (err: any) {
+      expect(err.message).toContain("Nothing was persisted");
+      expect(err.message).toContain("orphaned");
+    }
+  });
+
+  it("leaves no wallet behind when the response is rejected", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: sponsored.publicKey(), secretKey: other.secret() }),
+    );
+
+    await expect(dispatchTool("mindvault_setup_wallet", {})).rejects.toThrow();
+    // No wallet was stored, so the next tool must report the wallet as missing
+    // rather than reporting a balance for an address this agent cannot use.
+    await expect(walletInfo()).rejects.toThrow(/mindvault_setup_wallet/);
+  });
+
+  it("warns in wallet_info when the stored secret does not own the address", async () => {
+    _setAgentWallet({ publicKey: sponsored.publicKey(), secretKey: other.secret() });
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        mockResponse({
+          subentry_count: 1,
+          balances: [
+            { asset_type: "native", balance: "10.0000000" },
+            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "25.0" },
+          ],
+        }),
+      ),
+    );
+
+    const out = await walletInfo();
+    expect(out).toContain("USDC Balance: 25.0");
+    expect(out).toContain("Keystore:");
+    expect(out).toContain("NOT spendable");
+  });
+
+  it("does not warn when the stored keypair is consistent", async () => {
+    _setAgentWallet({ publicKey: sponsored.publicKey(), secretKey: sponsored.secret() });
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        mockResponse({
+          subentry_count: 1,
+          balances: [{ asset_type: "native", balance: "10.0000000" }],
+        }),
+      ),
+    );
+
+    expect(await walletInfo()).not.toContain("NOT spendable");
+  });
+});
+
 // ── state-mutating calls are serialized (#550) ──────────────────────────────
 
 describe("state-mutating calls are serialized (#550)", () => {
+  // setupWallet verifies that the secret the service returns derives the
+  // address it returns (#839), so these fixtures are real keypairs rather than
+  // placeholder strings.
+  const sponsored = Keypair.random();
+  const SPONSORED_PUBLIC = sponsored.publicKey();
+  const SPONSORED_SECRET = sponsored.secret();
+
   beforeEach(() => {
+    vi.doUnmock("@stellar/stellar-sdk");
     _resetProfiles();
   });
 
@@ -2113,7 +2231,7 @@ describe("state-mutating calls are serialized (#550)", () => {
     // the state mutex, neither may clobber the other's saveState(), so both
     // profiles must survive.
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      mockResponse({ publicKey: "GPTESTALICE", secretKey: "STESTALICE" }),
+      mockResponse({ publicKey: SPONSORED_PUBLIC, secretKey: SPONSORED_SECRET }),
     );
 
     const [alice, bob] = await Promise.all([
@@ -2123,12 +2241,12 @@ describe("state-mutating calls are serialized (#550)", () => {
 
     expect(alice).toContain("Wallet created.");
     expect(bob).toContain("Wallet created.");
-    expect(alice).toContain("Address: GPTESTALICE");
-    expect(bob).toContain("Address: GPTESTALICE");
+    expect(alice).toContain(`Address: ${SPONSORED_PUBLIC}`);
+    expect(bob).toContain(`Address: ${SPONSORED_PUBLIC}`);
 
     const list = listProfiles();
-    expect(list).toContain("alice — GPTESTALICE");
-    expect(list).toContain("bob — GPTESTALICE");
+    expect(list).toContain(`alice — ${SPONSORED_PUBLIC}`);
+    expect(list).toContain(`bob — ${SPONSORED_PUBLIC}`);
   });
 
   it("keeps a serialized mutating call from losing an earlier profile", async () => {
@@ -2136,7 +2254,7 @@ describe("state-mutating calls are serialized (#550)", () => {
     // go through the same lock, so the slow wallet setup cannot run its
     // read-modify-write while use_profile is mid-flight and drop its profile.
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      mockResponse({ publicKey: "GPTESTBOB", secretKey: "STESTBOB" }),
+      mockResponse({ publicKey: SPONSORED_PUBLIC, secretKey: SPONSORED_SECRET }),
     );
 
     const [profile, wallet] = await Promise.all([
@@ -2145,11 +2263,11 @@ describe("state-mutating calls are serialized (#550)", () => {
     ]);
 
     expect(profile).toContain("Active profile: buyer");
-    expect(wallet).toContain("Address: GPTESTBOB");
+    expect(wallet).toContain(`Address: ${SPONSORED_PUBLIC}`);
 
     const list = listProfiles();
     expect(list).toContain("buyer");
-    expect(list).toContain("bob — GPTESTBOB");
+    expect(list).toContain(`bob — ${SPONSORED_PUBLIC}`);
   });
 });
 

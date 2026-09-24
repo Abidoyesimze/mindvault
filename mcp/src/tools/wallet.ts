@@ -18,7 +18,14 @@ import {
   SPONSORED_CREATE_PATH,
   mapSponsoredHttpFailure,
   mapSponsoredTransportFailure,
+  sanitizeServiceUrl,
 } from "../sponsoredDiagnostics.js";
+import {
+  checkWalletIntegrity,
+  sponsoredWalletIntegrityError,
+  unownedWalletNote,
+  type DerivePublicKey,
+} from "../sponsoredWallet.js";
 import {
   buildPublishStatusSnapshot,
   normalizeIntervalMs,
@@ -110,6 +117,12 @@ function sponsoredAccountErrorData(status: number, data: unknown): unknown {
   return data;
 }
 
+/** Stellar key derivation for the wallet integrity checks, loaded on demand. */
+async function stellarDerivePublicKey(): Promise<DerivePublicKey> {
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  return (secretKey: string) => Keypair.fromSecret(secretKey).publicKey();
+}
+
 export async function setupWallet(profileArg?: string): Promise<string> {
   const target = resolveProfileName(profileArg);
   const operation = "mindvault_setup_wallet failed to create wallet";
@@ -136,13 +149,21 @@ export async function setupWallet(profileArg?: string): Promise<string> {
       }),
     );
   }
+  // A 200 is not proof the service completed: a half-finished creation can
+  // answer with an address whose secret is missing or belongs to a different
+  // account, leaving the agent a funded address it cannot sign for (#839).
+  const integrity = checkWalletIntegrity(res.data ?? {}, await stellarDerivePublicKey());
+  if (!integrity.ok) {
+    throw sponsoredWalletIntegrityError(integrity, sanitizeServiceUrl(SPONSORED_ACCOUNT_URL));
+  }
+
   setActiveProfileName(target);
-  activeProfile().wallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
+  activeProfile().wallet = { publicKey: integrity.publicKey, secretKey: integrity.secretKey };
   saveState();
   return [
     `Wallet created.`,
     `Profile: ${target}`,
-    `Address: ${res.data.publicKey}`,
+    `Address: ${integrity.publicKey}`,
     `Wallet persisted to ${STATE_FILE} (mode 0600).`,
   ].join("\n");
 }
@@ -150,6 +171,7 @@ export async function setupWallet(profileArg?: string): Promise<string> {
 export async function walletInfo(): Promise<string> {
   const wallet = requireWallet();
   const details = await getBalanceDetails(wallet.publicKey);
+  const integrity = checkWalletIntegrity(wallet, await stellarDerivePublicKey());
 
   const lines = [
     `Profile: ${activeProfileName}`,
@@ -161,6 +183,12 @@ export async function walletInfo(): Promise<string> {
     `USDC Status: ${details.status}`,
     `Publisher registered: ${currentApiKey() ? "yes" : "no"}`,
   ];
+
+  if (!integrity.ok) {
+    // The balance above is real, but this agent cannot sign for the address it
+    // belongs to, so never let it read as spendable funds (#839).
+    lines.push(`⚠ Keystore: ${unownedWalletNote(integrity)}`);
+  }
 
   if (details.message) {
     lines.push(`Note: ${details.message}`);

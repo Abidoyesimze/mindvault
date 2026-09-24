@@ -141,8 +141,15 @@ import {
 import {
   mapSponsoredHttpFailure,
   mapSponsoredTransportFailure,
+  sanitizeServiceUrl,
   SPONSORED_CREATE_PATH,
 } from "./sponsoredDiagnostics.js";
+import {
+  checkWalletIntegrity,
+  sponsoredWalletIntegrityError,
+  unownedWalletNote,
+  type DerivePublicKey,
+} from "./sponsoredWallet.js";
 import { parseMetadataHash } from "./metadataHash.js";
 import {
   applyCatalogSort,
@@ -361,7 +368,15 @@ function persistableProfiles(): Record<string, WalletProfile> {
   return out;
 }
 
-function saveState(): void {
+/**
+ * Persist the profile state, reporting whether the write landed.
+ *
+ * A failed write stays non-fatal — losing the state file must not take the
+ * server down mid-session — but callers that just told the agent its wallet is
+ * safe on disk need to know when it is not (#839). Callers that do not care can
+ * keep ignoring the result.
+ */
+function saveState(): boolean {
   try {
     const state: ProfileState = {
       version: STATE_VERSION,
@@ -369,8 +384,10 @@ function saveState(): void {
       profiles: persistableProfiles(),
     };
     writeAtomically(STATE_FILE, JSON.stringify(state, null, 2), 0o600);
+    return true;
   } catch (err) {
     console.error("MindVault MCP: failed to persist state:", safeErrorMessage(err));
+    return false;
   }
 }
 
@@ -1005,6 +1022,17 @@ function sponsoredAccountErrorData(status: number, data: unknown): unknown {
   return data;
 }
 
+/**
+ * Stellar key derivation for the wallet integrity checks, loaded on demand.
+ *
+ * The SDK import is deferred — as `mindvault_import_wallet` already does — so
+ * the full Stellar SDK stays off the server's startup path.
+ */
+async function stellarDerivePublicKey(): Promise<DerivePublicKey> {
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  return (secretKey: string) => Keypair.fromSecret(secretKey).publicKey();
+}
+
 async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
   const target = resolveProfileName(profileArg);
   const operation = "mindvault_setup_wallet failed to create wallet";
@@ -1031,18 +1059,30 @@ async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
       }),
     );
   }
+  // A 200 is not proof the service completed: a half-finished creation can
+  // answer with an address whose secret is missing or belongs to a different
+  // account. Persisting that gives the agent a funded address it cannot sign
+  // for, which every later tool then reports as a healthy wallet (#839).
+  const integrity = checkWalletIntegrity(res.data ?? {}, await stellarDerivePublicKey());
+  if (!integrity.ok) {
+    throw sponsoredWalletIntegrityError(integrity, sanitizeServiceUrl(SPONSORED_ACCOUNT_URL));
+  }
+
   activeProfileName = target;
-  activeProfile().wallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
-  saveState();
+  activeProfile().wallet = { publicKey: integrity.publicKey, secretKey: integrity.secretKey };
+  const persisted = saveState();
   const text = [
     `Wallet created.`,
     `Profile: ${target}`,
-    `Address: ${res.data.publicKey}`,
-    `Wallet persisted to ${STATE_FILE} (mode 0600).`,
+    `Address: ${integrity.publicKey}`,
+    persisted
+      ? `Wallet persisted to ${STATE_FILE} (mode 0600).`
+      : `⚠ Wallet held in memory only — writing ${STATE_FILE} failed, so it is lost when this server stops. ` +
+        `Back it up now with mindvault_backup_state, then fix the state directory's permissions.`,
   ].join("\n");
   return {
     text,
-    structured: { profile: target, address: res.data.publicKey, persisted: true },
+    structured: { profile: target, address: integrity.publicKey, persisted },
   };
 }
 
@@ -1050,6 +1090,13 @@ async function walletInfoOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const details = await getBalanceDetails(wallet.publicKey);
   const publisherRegistered = !!currentApiKey();
+
+  // A stored keypair can name an address this agent cannot sign for — a
+  // half-completed sponsored creation, a hand-edited state file, a restored
+  // backup from another profile. The balance below is real either way, so say
+  // plainly when it is not spendable rather than letting it read as funds (#839).
+  const integrity = checkWalletIntegrity(wallet, await stellarDerivePublicKey());
+  const ownsAddress = integrity.ok;
 
   const lines = [
     `Profile: ${activeProfileName}`,
@@ -1061,6 +1108,10 @@ async function walletInfoOutcome(): Promise<ToolOutcome> {
     `USDC Status: ${details.status}`,
     `Publisher registered: ${publisherRegistered ? "yes" : "no"}`,
   ];
+
+  if (!ownsAddress) {
+    lines.push(`⚠ Keystore: ${unownedWalletNote(integrity)}`);
+  }
 
   if (details.message) {
     lines.push(`Note: ${details.message}`);
@@ -1077,6 +1128,8 @@ async function walletInfoOutcome(): Promise<ToolOutcome> {
       usdcBalance: details.usdcBalance,
       usdcStatus: details.status,
       publisherRegistered,
+      /** False when the stored secret does not derive this address (#839). */
+      ownsAddress,
       note: details.message ?? null,
     },
   };
