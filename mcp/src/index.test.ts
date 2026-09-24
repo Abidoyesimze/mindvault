@@ -65,6 +65,7 @@ import {
   setPrice,
   transferOwnership,
   setListed,
+  setTags,
   _setAgentWallet,
   _setAgentApiKey,
   _resetProfiles,
@@ -2014,6 +2015,63 @@ describe("setListed", () => {
         listed: true,
       });
       expect(res).toContain("success");
+    } finally {
+      delete process.env.MINDVAULT_MOCK;
+    }
+  });
+});
+
+describe("setTags (#832)", () => {
+  beforeEach(() => {
+    _resetProfiles();
+  });
+
+  it("throws when no wallet is set up", async () => {
+    await expect(setTags("res-001", ["dataset"])).rejects.toThrow("No wallet");
+  });
+
+  it("succeeds in mock mode when wallet is present", async () => {
+    _setAgentWallet({
+      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
+    });
+    process.env.MINDVAULT_MOCK = "1";
+    try {
+      const res = await setTags("res-001", ["dataset", "research"]);
+      expect(res).toContain('Tags updated for resource "res-001".');
+      expect(res).toContain("Tags: dataset, research");
+      expect(res).toContain("MOCK_TX_SET_TAGS_res-001");
+    } finally {
+      delete process.env.MINDVAULT_MOCK;
+    }
+  });
+
+  it("normalizes and deduplicates tags through dispatchTool", async () => {
+    _setAgentWallet({
+      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
+    });
+    process.env.MINDVAULT_MOCK = "1";
+    try {
+      const res = await dispatchTool("mindvault_set_tags", {
+        resourceId: "res-001",
+        tags: [" Dataset ", "DATASET", "research"],
+      });
+      expect(res).toContain("Tags: dataset, research");
+    } finally {
+      delete process.env.MINDVAULT_MOCK;
+    }
+  });
+
+  it("allows an empty list to clear tags", async () => {
+    _setAgentWallet({
+      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
+    });
+    process.env.MINDVAULT_MOCK = "1";
+    try {
+      const res = await dispatchTool("mindvault_set_tags", { resourceId: "res-001", tags: [] });
+      expect(res).toContain("Tags: (none)");
     } finally {
       delete process.env.MINDVAULT_MOCK;
     }
