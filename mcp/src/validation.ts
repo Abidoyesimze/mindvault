@@ -247,7 +247,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmPaid: CONFIRM_PAID,
   },
   mindvault_export_receipts: {
-    format: { kind: "enum", values: ["json", "csv"] },
+    format: { kind: "enum", values: ["json", "csv", "ndjson"] },
     resourceId: { ...RESOURCE_ID, required: false },
     network: { kind: "string", maxLength: 64 },
     since: { kind: "string", maxLength: 64 },

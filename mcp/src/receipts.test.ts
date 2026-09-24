@@ -15,6 +15,7 @@ import {
   exportReceiptsTool,
   normalizeReceiptExportOptions,
   receiptsToCsv,
+  receiptsToNdjson,
   sumAmounts,
   toExportedReceipt,
   ReceiptExportError,
@@ -62,6 +63,10 @@ describe("normalizeReceiptExportOptions", () => {
     ).toEqual({ format: "csv", resourceId: "res-001", network: "x" });
   });
 
+  it("accepts the ndjson format", () => {
+    expect(normalizeReceiptExportOptions({ format: "ndjson" })).toEqual({ format: "ndjson" });
+  });
+
   it("reads a bare date as midnight UTC", () => {
     const options = normalizeReceiptExportOptions({ since: "2026-08-01" });
     expect(options.since).toBe("2026-08-01T00:00:00.000Z");
@@ -70,7 +75,7 @@ describe("normalizeReceiptExportOptions", () => {
   it("rejects an unknown format", () => {
     expect(() => normalizeReceiptExportOptions({ format: "xml" })).toThrow(ReceiptExportError);
     expect(() => normalizeReceiptExportOptions({ format: "xml" })).toThrow(
-      /must be "json" or "csv"/,
+      /must be "json", "csv", or "ndjson"/,
     );
   });
 
@@ -170,6 +175,37 @@ describe("receiptsToCsv", () => {
   });
 });
 
+describe("receiptsToNdjson", () => {
+  it("returns an empty string for an empty export", () => {
+    expect(receiptsToNdjson([])).toBe("");
+  });
+
+  it("produces one JSON object per line", () => {
+    const rows = [exportedRow({ resourceId: "res-001" }), exportedRow({ resourceId: "res-002" })];
+    const result = receiptsToNdjson(rows);
+    const lines = result.split("\n");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]).resourceId).toBe("res-001");
+    expect(JSON.parse(lines[1]).resourceId).toBe("res-002");
+  });
+
+  it("each line is a valid JSON object with the expected fields", () => {
+    const row = exportedRow();
+    const line = receiptsToNdjson([row]);
+    const parsed = JSON.parse(line);
+    expect(parsed).toEqual(row);
+  });
+
+  it("preserves null fields in the JSON output", () => {
+    const row = exportedRow({ txHash: null, explorerUrl: null, title: null });
+    const line = receiptsToNdjson([row]);
+    const parsed = JSON.parse(line);
+    expect(parsed.txHash).toBeNull();
+    expect(parsed.explorerUrl).toBeNull();
+    expect(parsed.title).toBeNull();
+  });
+});
+
 describe("buildReceiptExport", () => {
   it("returns a versioned envelope that echoes its filters", () => {
     const result = buildReceiptExport([storedReceipt()], { format: "json" }, NOW, "testnet");
@@ -195,6 +231,27 @@ describe("buildReceiptExport", () => {
     expect(result.csv).toContain("res-001");
     // Both views describe the same rows.
     expect(result.csv?.split("\r\n").length).toBe(result.count + 1);
+  });
+
+  it("includes the ndjson document only for the ndjson format", () => {
+    const result = buildReceiptExport([storedReceipt()], { format: "ndjson" }, NOW, "testnet");
+    expect(result.ndjson).toBeDefined();
+    expect(result.csv).toBeUndefined();
+    // One line per receipt.
+    expect(result.ndjson?.split("\n").length).toBe(result.count);
+    const parsed = JSON.parse(result.ndjson!.split("\n")[0]);
+    expect(parsed.resourceId).toBe("res-001");
+  });
+
+  it("ndjson is absent for json format", () => {
+    const result = buildReceiptExport([storedReceipt()], { format: "json" }, NOW, "testnet");
+    expect(result.ndjson).toBeUndefined();
+  });
+
+  it("ndjson is an empty string for an empty ndjson export", () => {
+    const result = buildReceiptExport([], { format: "ndjson" }, NOW, "testnet");
+    expect(result.ndjson).toBe("");
+    expect(result.count).toBe(0);
   });
 
   it("applies an inclusive date range", () => {
@@ -297,6 +354,24 @@ describe("exportReceiptsTool", () => {
     expect(result.csv).toBe(RECEIPT_CSV_COLUMNS.join(","));
   });
 
+  it("exports an ndjson document when format is ndjson", () => {
+    recordPurchase({
+      resourceId: "res-001",
+      amount: "1.50",
+      network: "stellar:testnet",
+      txHash: "abc",
+      receiptRef: "pay-1",
+      title: "Intro to Stellar",
+    });
+
+    const result = JSON.parse(exportReceiptsTool({ format: "ndjson" }));
+    expect(result.format).toBe("ndjson");
+    expect(result.ndjson).toBeDefined();
+    expect(typeof result.ndjson).toBe("string");
+    const parsed = JSON.parse(result.ndjson);
+    expect(parsed.resourceId).toBe("res-001");
+  });
+
   it("surfaces a bad filter as a deterministic error", () => {
     expect(() => exportReceiptsTool({ limit: -1 })).toThrow(ReceiptExportError);
   });
@@ -324,6 +399,23 @@ describe("advertised output schema", () => {
     );
     for (const column of RECEIPT_CSV_COLUMNS) {
       expect(rowProperties).toContain(column);
+    }
+  });
+
+  it("advertises ndjson as a valid format", () => {
+    const formats = RECEIPT_EXPORT_OUTPUT_SCHEMA.properties.format.enum as readonly string[];
+    expect(formats).toContain("ndjson");
+  });
+
+  it("advertises the ndjson field in the output schema", () => {
+    expect(Object.keys(RECEIPT_EXPORT_OUTPUT_SCHEMA.properties)).toContain("ndjson");
+  });
+
+  it("advertises ndjson in the schema for ndjson export", () => {
+    const produced = buildReceiptExport([storedReceipt()], { format: "ndjson" }, NOW, "testnet");
+    const advertised = Object.keys(RECEIPT_EXPORT_OUTPUT_SCHEMA.properties);
+    for (const key of Object.keys(produced)) {
+      expect(advertised, `${key} is returned but not advertised`).toContain(key);
     }
   });
 });

@@ -364,16 +364,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_export_receipts",
     description:
-      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, or RFC 4180 CSV in the envelope's csv field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
+      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, RFC 4180 CSV in the envelope's csv field, or Newline-Delimited JSON in the envelope's ndjson field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
     inputSchema: {
       type: "object",
       properties: {
         format: {
           type: "string",
-          enum: ["json", "csv"],
+          enum: ["json", "csv", "ndjson"],
           description:
-            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field.',
-          examples: ["json", "csv"],
+            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field; "ndjson" renders each row as a JSON object on its own line in the envelope\'s ndjson field.',
+          examples: ["json", "csv", "ndjson"],
         },
         resourceId: {
           type: "string",
