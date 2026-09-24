@@ -31,6 +31,7 @@ import { dryRunPublish, dryRunBuy } from "../dryRun.js";
 import { safeErrorMessage } from "../redaction.js";
 import { recordPurchase } from "../purchaseHistory.js";
 import { mockSetListed, mockSetPrice, mockTransferOwnership, mockUpdateMetadata } from "../mock.js";
+import { assertTransactionFeeWithinCeiling } from "../paymentCeiling.js";
 
 export function usdcToStroops(usdc: string): bigint {
   const parts = usdc.split(".");
@@ -436,6 +437,7 @@ async function signAndSendRegistryTx(
       signTransaction: async (xdr: string) => {
         const { Transaction } = await import("@stellar/stellar-sdk");
         const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+        assertTransactionFeeWithinCeiling({ feeStroops: stellarTx.fee });
         stellarTx.sign(keypair);
         return { signedTxXdr: stellarTx.toXDR() };
       },

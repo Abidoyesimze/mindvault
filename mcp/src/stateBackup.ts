@@ -51,6 +51,10 @@ export class StateBackupError extends Error {
   }
 }
 
+export interface RestoreStateOptions {
+  expectedNetwork?: string;
+}
+
 export interface PersistedStateSecretMatch {
   path: string;
   kind: "wallet-secret-key" | "api-key";
@@ -135,6 +139,7 @@ export function restoreState(
   blob: string,
   passphrase: string,
   write: (state: ProfileState) => void,
+  options: RestoreStateOptions = {},
 ): string {
   if (!passphrase || passphrase.length < 8) {
     throw new StateBackupError("Passphrase must be at least 8 characters.");
@@ -179,6 +184,16 @@ export function restoreState(
     state = normalizePersisted(JSON.parse(plaintext));
   } catch {
     throw new StateBackupError("Backup contents are not valid state.");
+  }
+  if (options.expectedNetwork) {
+    const mismatched = Object.entries(state.profiles).find(
+      ([, profile]) => profile.network && profile.network !== options.expectedNetwork,
+    );
+    if (mismatched) {
+      throw new StateBackupError(
+        `Backup belongs to network "${mismatched[1].network}" but the active profile uses "${options.expectedNetwork}".`,
+      );
+    }
   }
   write(state);
   return `State restored: ${Object.keys(state.profiles).length} profile(s), active "${state.activeProfile}".`;

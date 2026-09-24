@@ -9,6 +9,7 @@ import {
   setProfiles,
   STATE_FILE,
   activeProfileName,
+  NETWORK,
 } from "../runtime.js";
 import { DEFAULT_PROFILE, isValidProfileName } from "../profiles.js";
 import {
@@ -30,7 +31,7 @@ export function backupState(passphrase: string): string {
 }
 
 export function restoreStateTool(blob: string, passphrase: string): string {
-  return restoreStateFromBackup(blob, passphrase, applyRestoredState);
+  return restoreStateFromBackup(blob, passphrase, applyRestoredState, { expectedNetwork: NETWORK });
 }
 
 export function resetState(all: boolean, confirm: unknown = false): string {

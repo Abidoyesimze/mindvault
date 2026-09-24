@@ -6,6 +6,7 @@
  */
 
 export const DEFAULT_MAX_AUTO_PAY_USDC = "10";
+export const DEFAULT_MAX_AUTO_FEE_STROOPS = "100000";
 
 const USDC_AMOUNT = /^\d+(?:\.\d{1,7})?$/;
 const STROOPS_PER_USDC = 10_000_000n;
@@ -60,4 +61,18 @@ export function assertAutoPaymentWithinCeiling(input: {
     `Purchase requires ${requiredAmount} USDC, which exceeds the automatic payment ceiling of ${ceiling.value} USDC. ` +
       `To authorize this purchase, call mindvault_buy with maxAutoPayUsdc: "${requiredAmount}" (or a higher amount).`,
   );
+}
+
+/** Bound sponsored Stellar transaction fees for registry mutations. */
+export function assertTransactionFeeWithinCeiling(input: {
+  feeStroops: string | number | bigint;
+  env?: NodeJS.ProcessEnv;
+}): void {
+  const raw = input.env?.MINDVAULT_MAX_AUTO_FEE_STROOPS ?? process.env.MINDVAULT_MAX_AUTO_FEE_STROOPS ?? DEFAULT_MAX_AUTO_FEE_STROOPS;
+  if (!/^\d+$/.test(raw)) throw new Error("MINDVAULT_MAX_AUTO_FEE_STROOPS must be a non-negative integer.");
+  const fee = BigInt(String(input.feeStroops));
+  const ceiling = BigInt(raw);
+  if (fee > ceiling) {
+    throw new Error(`On-chain mutation fee ${fee} stroops exceeds the automatic fee ceiling of ${ceiling} stroops.`);
+  }
 }

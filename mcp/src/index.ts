@@ -59,7 +59,7 @@ import {
 } from "./mock.js";
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
-import { exportReceiptsTool } from "./receipts.js";
+import { exportReceiptsToolWithTimeout } from "./receipts.js";
 import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
 import { advertisedTools, hasOutputSchema } from "./toolSurface.js";
 import { dryRunPublish, dryRunBuy } from "./dryRun.js";
@@ -96,7 +96,7 @@ import {
 } from "./publishStatus.js";
 import { type ApiResponse } from "./apiResponse.js";
 import { safeErrorMessage, safeLog } from "./redaction.js";
-import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
+import { assertAutoPaymentWithinCeiling, assertTransactionFeeWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
   exportState,
@@ -116,6 +116,7 @@ import {
   withTimeout,
   type TimeoutService,
 } from "./httpTimeout.js";
+import { resolveToolTimeouts, timeoutForTool } from "./toolTimeoutOverrides.js";
 import {
   describeRetryPolicy,
   formatRetryLog,
@@ -210,6 +211,7 @@ const httpFetch: typeof fetch = MOCK
   : (input, init) => fetch(input as RequestInfo | URL, init);
 
 const TIMEOUTS = resolveTimeouts(process.env);
+const TOOL_TIMEOUTS = resolveToolTimeouts(process.env).overrides;
 
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
 
@@ -254,6 +256,10 @@ function activeProfile(): WalletProfile {
   return (profiles[activeProfileName] ??= {});
 }
 
+function bindActiveProfileToNetwork(): void {
+  activeProfile().network ??= NETWORK;
+}
+
 function currentWallet(): AgentWallet | null {
   return profiles[activeProfileName]?.wallet ?? null;
 }
@@ -263,7 +269,10 @@ function currentApiKey(): string | null {
 }
 
 export function _setAgentWallet(w: AgentWallet | null): void {
-  if (w) activeProfile().wallet = w;
+  if (w) {
+    activeProfile().wallet = w;
+    bindActiveProfileToNetwork();
+  }
   else delete activeProfile().wallet;
 }
 export function _setAgentApiKey(k: string | null): void {
@@ -293,7 +302,9 @@ export function backupState(passphrase: string): string {
 }
 
 export function restoreStateTool(blob: string, passphrase: string): string {
-  return restoreState(blob, passphrase, applyRestoredState);
+  return restoreState(blob, passphrase, applyRestoredState, {
+    expectedNetwork: NETWORK,
+  });
 }
 
 function quarantineCorruptState(reason: string, detail: string): void {
@@ -555,6 +566,7 @@ async function importWallet(args: {
   if (persist) {
     activeProfileName = target;
     activeProfile().wallet = { publicKey, secretKey };
+    bindActiveProfileToNetwork();
     saveState();
     return {
       text: [
@@ -1032,6 +1044,7 @@ async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
   }
   activeProfileName = target;
   activeProfile().wallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
+  bindActiveProfileToNetwork();
   saveState();
   const text = [
     `Wallet created.`,
@@ -1684,6 +1697,7 @@ export async function registerOnchain(
   const { Keypair, Transaction } = await import("@stellar/stellar-sdk");
   const passphrase = networkPassphrase ?? REGISTRY_NETWORK_PASSPHRASE;
   const tx = new Transaction(unsignedXdr, passphrase);
+  assertTransactionFeeWithinCeiling({ feeStroops: tx.fee });
   tx.sign(Keypair.fromSecret(wallet.secretKey));
   const signedXdr = tx.toXDR();
 
@@ -2616,7 +2630,10 @@ async function dispatchToolOutcome(
       case "mindvault_purchase_history":
         return purchaseHistoryTool(rawRecord);
       case "mindvault_export_receipts":
-        return exportReceiptsTool(rawRecord);
+        return exportReceiptsToolWithTimeout(
+          rawRecord,
+          timeoutForTool("mindvault_export_receipts", "http", TIMEOUTS, TOOL_TIMEOUTS),
+        );
       case "mindvault_register_onchain":
         return registerOnchain(requiredString(args, "resourceId"), onProgress);
       case "mindvault_agent_status":
