@@ -58,6 +58,7 @@ pub const MAX_BATCH_REGISTER: u32 = 10;
 pub const MAX_FEE_BPS: u32 = 5_000;
 /// Denominator for converting basis-point values to a fraction (1/10 000).
 pub const FEE_BPS_DENOM: u32 = 10_000;
+pub const MAX_FEE_DESTINATION_BPS: u32 = FEE_BPS_DENOM;
 
 /// Stable registry name returned by [`VaultRegistry::registry_info`].
 pub const REGISTRY_NAME: &str = "mindvault-vault-registry";
@@ -165,6 +166,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("set_fee_config", "admin"),
     ("get_fee_config", "—"),
     ("set_fee_recipient", "admin"),
+    ("set_fee_destination", "admin"),
+    ("get_fee_destination", "—"),
     // ── Index repair ──────────────────────────────────────────────────────
     ("repair_index", "admin"),
     ("repair_tag_index", "admin"),
@@ -222,8 +225,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (31, "NetworkAlreadyInitialized", "Network identifier has already been initialized for this contract instance."),
     (32, "NetworkIdMismatch", "Invocation network identifier does not match configured network ID."),
     (33, "NetworkNotInitialized", "Network identifier has not been initialized."),
-    (34, "FeeBpsTooHigh", "A fee value exceeds the configured basis-point ceiling."),
-    (35, "TotalFeeTooHigh", "The combined platform and royalty fees exceed the ceiling."),
+    (34, "FeeBpsTooHigh", "A fee or fee-destination basis-point value exceeds its configured ceiling."),
+    (35, "TotalFeeTooHigh", "The combined fee policy or fee-destination split is invalid."),
     (36, "CountOverflow", "The global resource count would overflow `u32`."),
     (37, "BatchTooLarge", "`get_many` was called with more than 20 ids."),
     (38, "DuplicateReceipt", "A purchase receipt is already anchored for `(resource_id, buyer)`."),
@@ -237,7 +240,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (46, "AttestationHashTooLong", "`attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes)."),
     (47, "PaymentAmountMismatch", "Payment receipt amount does not match the resource's current price."),
     (48, "DuplicateTxHash", "A payment receipt is already stored for the supplied settlement transaction hash (`tx_hash`)."),
-    (49, "FeeConfigNotSet", "`set_fee_recipient` was called before any fee config was set via `set_fee_config`."),
+    (49, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
     (50, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
 ];
 
@@ -308,7 +311,14 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("flagrsn", "(moderator: Address, reason_hash: String)"),
     ("retagidx", "new_count: u32"),
     ("reactive", "resource id"),
-    ("setfee", "FeeConfigUpdated { old_config, new_config }"),
+    (
+        "setfee",
+        "FeeConfigUpdated { old_config, new_config }",
+    ),
+    (
+        "setdest",
+        "FeeDestinationUpdated { old_destination, new_destination, ledger }",
+    ),
     ("ttlext", "()"),
 ];
 
@@ -564,6 +574,7 @@ pub enum DataKey {
     AttestationHash(String),
     /// Ledger sequence at which the pending admin nomination expires.
     PendingAdminExpiry,
+    FeeDestination,
 }
 
 /// Event data emitted when a resource's metadata pointer is updated.
@@ -612,6 +623,29 @@ pub enum OptFeeConfig {
 pub struct FeeConfigUpdated {
     pub old_config: OptFeeConfig,
     pub new_config: FeeConfig,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum FeeDestination {
+    None,
+    Burn,
+    Charity(Address),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FeeDestinationConfig {
+    pub bps: u32,
+    pub destination: FeeDestination,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FeeDestinationUpdated {
+    pub old_destination: FeeDestinationConfig,
+    pub new_destination: FeeDestinationConfig,
+    pub ledger: u32,
 }
 
 /// On-chain record of a single x402/Soroban payment settlement for a resource.
@@ -759,9 +793,9 @@ pub enum Error {
     NetworkAlreadyInitialized = 31,
     NetworkIdMismatch = 32,
     NetworkNotInitialized = 33,
-    /// A fee value exceeds the configured basis-point ceiling.
+    /// A fee or fee-destination basis-point value exceeds its configured ceiling.
     FeeBpsTooHigh = 34,
-    /// The combined platform and royalty fees exceed the ceiling.
+    /// The combined fee policy or fee-destination split is invalid.
     TotalFeeTooHigh = 35,
     /// The global resource count would overflow `u32`.
     CountOverflow = 36,
@@ -791,7 +825,7 @@ pub enum Error {
     /// A payment receipt is already stored for the supplied settlement
     /// transaction hash (`tx_hash`); a single Stellar tx must map to one receipt.
     DuplicateTxHash = 48,
-    /// `set_fee_recipient` was called before any fee config was set via `set_fee_config`.
+    /// `set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`.
     FeeConfigNotSet = 49,
     /// The pending admin nomination is missing or has expired.
     AdminNominationExpired = 50,
@@ -2113,6 +2147,8 @@ impl VaultRegistry {
         if config.platform_fee_bps + config.royalty_bps > MAX_FEE_BPS {
             return Err(Error::TotalFeeTooHigh);
         }
+        let destination = Self::load_fee_destination(&env);
+        Self::validate_fee_destination_for_fee_config(&config, &destination)?;
 
         let old_config: OptFeeConfig = env
             .storage()
@@ -2157,12 +2193,11 @@ impl VaultRegistry {
             .instance()
             .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
             .ok_or(Error::FeeConfigNotSet)?;
-
+        let destination = Self::load_fee_destination(&env);
         let old_config = OptFeeConfig::Some(config.clone());
-        
-        // Update only the recipient
         config.fee_recipient = recipient;
-        
+        Self::validate_fee_destination_for_fee_config(&config, &destination)?;
+
         env.storage().instance().set(&DataKey::FeeConfig, &config);
         Self::bump_instance(&env);
 
@@ -2173,6 +2208,80 @@ impl VaultRegistry {
                 new_config: config,
             },
         );
+        Ok(())
+    }
+
+    pub fn set_fee_destination(env: Env, config: FeeDestinationConfig) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+
+        let fee_config = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+            .ok_or(Error::FeeConfigNotSet)?;
+        Self::validate_fee_destination_for_fee_config(&fee_config, &config)?;
+
+        let old_destination = Self::load_fee_destination(&env);
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeDestination, &config);
+        Self::bump_instance(&env);
+        env.events().publish(
+            (symbol_short!("setdest"),),
+            FeeDestinationUpdated {
+                old_destination,
+                new_destination: config,
+                ledger: env.ledger().sequence(),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn get_fee_destination(env: Env) -> FeeDestinationConfig {
+        Self::load_fee_destination(&env)
+    }
+
+    fn default_fee_destination() -> FeeDestinationConfig {
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    }
+
+    fn load_fee_destination(env: &Env) -> FeeDestinationConfig {
+        env.storage()
+            .instance()
+            .get(&DataKey::FeeDestination)
+            .unwrap_or_else(Self::default_fee_destination)
+    }
+
+    fn validate_fee_destination(destination: &FeeDestinationConfig) -> Result<(), Error> {
+        if destination.bps > MAX_FEE_DESTINATION_BPS {
+            return Err(Error::FeeBpsTooHigh);
+        }
+        match &destination.destination {
+            FeeDestination::None if destination.bps == 0 => Ok(()),
+            FeeDestination::Burn | FeeDestination::Charity(_) if destination.bps > 0 => Ok(()),
+            _ => Err(Error::TotalFeeTooHigh),
+        }
+    }
+
+    fn validate_fee_destination_for_fee_config(
+        fee_config: &FeeConfig,
+        destination: &FeeDestinationConfig,
+    ) -> Result<(), Error> {
+        Self::validate_fee_destination(destination)?;
+        if destination.bps == 0 {
+            return Ok(());
+        }
+        if fee_config.platform_fee_bps == 0 {
+            return Err(Error::TotalFeeTooHigh);
+        }
+        if destination.bps < MAX_FEE_DESTINATION_BPS && fee_config.fee_recipient.is_none() {
+            return Err(Error::TotalFeeTooHigh);
+        }
         Ok(())
     }
 

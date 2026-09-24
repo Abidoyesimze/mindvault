@@ -4091,6 +4091,11 @@ fn full_workflow_emits_exactly_the_documented_events() {
         fee_recipient: Some(admin2.clone()),
     }); // -> "setfee"
     record(&env, &client, &mut observed);
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: 250,
+        destination: FeeDestination::Burn,
+    });
+    record(&env, &client, &mut observed);
 
     let buyer = Address::generate(&env);
     client.anchor_purchase_receipt(
@@ -4413,6 +4418,233 @@ fn set_fee_recipient_emits_setfee_event() {
     assert_eq!(event_data.new_config.fee_recipient, Some(new_recipient));
     assert_eq!(event_data.new_config.platform_fee_bps, 100);
     assert_eq!(event_data.new_config.royalty_bps, 200);
+}
+
+#[test]
+fn fee_destination_defaults_to_disabled() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+}
+
+#[test]
+fn set_fee_destination_supports_burn_charity_and_clear() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin),
+    });
+
+    let burn = FeeDestinationConfig {
+        bps: 2_500,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&burn);
+    assert_eq!(client.get_fee_destination(), burn);
+
+    let charity = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Charity(Address::generate(&env)),
+    };
+    client.set_fee_destination(&charity);
+    assert_eq!(client.get_fee_destination(), charity);
+
+    let disabled = FeeDestinationConfig {
+        bps: 0,
+        destination: FeeDestination::None,
+    };
+    client.set_fee_destination(&disabled);
+    assert_eq!(client.get_fee_destination(), disabled);
+}
+
+#[test]
+fn set_fee_destination_emits_audit_event() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin),
+    });
+
+    env.ledger().set_sequence_number(321);
+    let new_destination = FeeDestinationConfig {
+        bps: 2_500,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&new_destination);
+
+    let events = env.events().all();
+    assert_eq!(events.len(), 1);
+    let (contract, topics, data) = events.get(0).unwrap();
+    assert_eq!(contract, client.address);
+    assert_eq!(topics.len(), 1);
+    let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+    assert_eq!(topic, symbol_short!("setdest"));
+    let event: FeeDestinationUpdated = data.try_into_val(&env).unwrap();
+    assert_eq!(
+        event.old_destination,
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+    assert_eq!(event.new_destination, new_destination);
+    assert_eq!(event.ledger, 321);
+}
+
+#[test]
+fn set_fee_destination_validates_bounds_and_combined_policy() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 0,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: MAX_FEE_DESTINATION_BPS + 1,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::FeeBpsTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::Charity(Address::generate(&env)),
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 2_500,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 2_500,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+}
+
+#[test]
+fn set_fee_destination_requires_fee_config() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: MAX_FEE_DESTINATION_BPS,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::FeeConfigNotSet))
+    );
+}
+
+#[test]
+fn set_fee_destination_requires_admin_auth() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(Address::generate(&env)),
+    });
+    env.mock_auths(&[]);
+    let result = client.try_set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+    assert!(result.is_err());
+}
+
+#[test]
+fn set_fee_destination_fails_when_paused() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    client.set_paused(&admin, &true);
+    let result = client.try_set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+    assert_eq!(result, Err(Ok(Error::ContractPaused)));
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+}
+
+#[test]
+fn fee_destination_is_preserved_and_partial_routes_require_recipient() {
+    let (_env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    let destination = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&destination);
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 2_000,
+        royalty_bps: 500,
+        fee_recipient: Some(admin.clone()),
+    });
+    assert_eq!(client.get_fee_destination(), destination);
+
+    assert_eq!(
+        client.try_set_fee_recipient(&None),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    let full_destination = FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&full_destination);
+    client.set_fee_recipient(&None);
+    assert_eq!(client.get_fee_destination(), full_destination);
+    assert_eq!(client.get_fee_config().unwrap().fee_recipient, None);
 }
 
 #[test]
@@ -8135,7 +8367,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 26] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -8180,6 +8412,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
         (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
         (DataKey::AttestationHash(id), "AttestationHash", 2),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
+        (DataKey::FeeDestination, "FeeDestination", 1),
     ]
 }
 
@@ -8221,7 +8454,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        25,
+        26,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -8252,6 +8485,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::PaymentTxHash(_) => "PaymentTxHash",
             DataKey::AttestationHash(_) => "AttestationHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
+            DataKey::FeeDestination => "FeeDestination",
         };
         assert_eq!(
             matched, *name,
