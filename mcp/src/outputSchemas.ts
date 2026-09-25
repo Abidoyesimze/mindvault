@@ -440,4 +440,7 @@ export const TEXT_ONLY_TOOLS = [
   "mindvault_register",
   "mindvault_rotate_publisher_key",
   "mindvault_set_tags",
+  "mindvault_switch_network_profile",
+  "mindvault_resource_provenance",
+  "mindvault_resource_change_log",
 ] as const;
