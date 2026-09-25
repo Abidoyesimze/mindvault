@@ -6,6 +6,7 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_wallet_info",
   "mindvault_use_profile",
   "mindvault_list_profiles",
+  "mindvault_switch_network_profile",
   "mindvault_browse",
   "mindvault_search",
   "mindvault_preview",
@@ -21,9 +22,12 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_check_consistency",
   "mindvault_registry_lookup",
   "mindvault_registry_list",
+  "mindvault_registry_count",
   "mindvault_tx_status",
   "mindvault_reset",
   "mindvault_backup_state",
+  "mindvault_resource_provenance",
+  "mindvault_resource_change_log",
   "mindvault_restore_state",
   "mindvault_metrics",
   "mindvault_set_tags",
@@ -36,9 +40,11 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_import_wallet",
   "mindvault_rotate_publisher_key",
   "mindvault_verify_install",
+  "mindvault_debug_bundle",
   "mindvault_recover_catalog_cache",
   "mindvault_publish_status",
   "mindvault_purchase_history",
+  "mindvault_publish_batch",
 ]
 `;
 

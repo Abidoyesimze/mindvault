@@ -221,6 +221,38 @@ export interface MetadataUpdateEvent {
   old_metadata: string;
 }
 
+/**
+ * Input item for a single resource in a `register_batch` call.
+ * Mirrors `BatchRegisterItem` from the vault-registry contract (`lib.rs`).
+ */
+export interface BatchRegisterItem {
+  /** Resource identifier (max 24 chars, same rules as `register`). */
+  id: string;
+  /** Price in USDC stroops (must be > 0). */
+  price: i128;
+  /** Metadata pointer (ipfs://, ar://, http(s)://, sha256:, sha-256:, or 0x). */
+  metadata: string;
+  /** Discovery tags (same constraints as `set_tags`). */
+  tags: Array<string>;
+  /** Optional off-chain content hash stored alongside the resource. */
+  content_hash: string | null;
+}
+
+/**
+ * Return value of `register_batch`.
+ * Mirrors `BatchRegisterResult` from the vault-registry contract (`lib.rs`).
+ */
+export interface BatchRegisterResult {
+  /** IDs of resources that were successfully registered. */
+  succeeded: Array<string>;
+  /**
+   * Pairs of (batch_index, error_code) for items that failed.
+   * `batch_index` is the 0-based position in the input array;
+   * `error_code` maps to the `Errors` table (e.g. 1 = AlreadyRegistered).
+   */
+  failed: Array<[u32, u32]>;
+}
+
 export interface Client {
   get: (
     { id }: { id: string },
@@ -256,6 +288,11 @@ export interface Client {
     }: { creator: string; id: string; price: i128; metadata: string; tags: Array<string> },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
+
+  register_batch: (
+    { creator, items }: { creator: string; items: Array<BatchRegisterItem> },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<BatchRegisterResult>>>;
 
   set_tags: (
     { id, tags }: { id: string; tags: Array<string> },
@@ -480,6 +517,7 @@ export class Client extends ContractClient {
     delist: this.txFromJSON<Result<void>>,
     exists: this.txFromJSON<boolean>,
     register: this.txFromJSON<Result<void>>,
+    register_batch: this.txFromJSON<Result<BatchRegisterResult>>,
     set_tags: this.txFromJSON<Result<void>>,
     get_owner: this.txFromJSON<Result<string>>,
     list_page: this.txFromJSON<CatalogPage>,

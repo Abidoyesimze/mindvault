@@ -8,6 +8,8 @@ measured it.
 
 This report is generated and enforced by the `storage_footprint_report` test in
 [`contract/contracts/vault-registry/src/test.rs`](../contract/contracts/vault-registry/src/test.rs).
+Contract CI runs the same report explicitly through `make footprint`, so
+storage growth fails unless the budget and this report are updated together.
 
 ## Running it
 
@@ -47,7 +49,9 @@ baseline for comparing one revision of the contract against another.
 | PaymentIndex -> receipt id | persistent | 104 |    72 |   176 |    240 |
 | PurchaseReceipt (anchor)   | persistent | 108 |   300 |   408 |    480 |
 | FlagReasonHash             | persistent |  68 |    72 |   140 |    200 |
+| AttestationHash            | persistent |  56 |    80 |   136 |    160 |
 | FeeConfig                  | instance   |  32 |   136 |   168 |    192 |
+| FeeDestination             | instance   |  36 |    76 |   112 |    192 |
 | Admin                      | instance   |  28 |    40 |    68 |     80 |
 | Verifier grant             | instance   |  68 |     8 |    76 |     96 |
 | Moderator grant            | instance   |  72 |     8 |    80 |     96 |
@@ -75,7 +79,7 @@ a single tag so the per-tag cost stays visible.
   measured at this fixture's cardinality (two resources for the creator, one
   resource per tag); read them as a per-member baseline. Each additional member
   adds roughly one id's worth of bytes.
-- **Instance entries** (`Count`, `CreatorCount`, `FeeConfig`, `Admin`, and the
+- **Instance entries** (`Count`, `CreatorCount`, `FeeConfig`, `FeeDestination`, `Admin`, and the
   three role grants) share the contract's instance TTL, so they are bumped
   together and never archive independently. They are all small; `CreatorCount`
   is the only one that grows with the number of distinct creators.

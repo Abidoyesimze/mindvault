@@ -55,6 +55,7 @@ describe("MCP integration harness", () => {
     expect(names).toContain("mindvault_registry_info");
     expect(names).toContain("mindvault_registry_lookup");
     expect(names).toContain("mindvault_registry_list");
+    expect(names).toContain("mindvault_registry_count");
     expect(names).toContain("mindvault_setup_wallet");
     expect(names.length).toBeGreaterThanOrEqual(15);
 
@@ -174,6 +175,29 @@ describe("MCP integration harness", () => {
     expect(harnessResultText(empty)).toMatch(/No on-chain resources in range/);
   });
 
+  it("calls mindvault_registry_count and returns global counts", async () => {
+    const result = await harness.callTool("mindvault_registry_count", {});
+    expect(harnessIsToolError(result)).toBe(false);
+    const text = harnessResultText(result);
+    const data = JSON.parse(text);
+    expect(data.source).toBe("on-chain (mock)");
+    // MOCK_REGISTRY_RESOURCES has 2 entries, both listed
+    expect(data.count).toBe(2);
+    expect(data.listedCount).toBe(2);
+    expect(data.creatorCount).toBeUndefined();
+    expect(data.creator).toBeUndefined();
+  });
+
+  it("calls mindvault_registry_count with a creator and returns creatorCount", async () => {
+    const result = await harness.callTool("mindvault_registry_count", {
+      creator: "GMOCKCREATOR1",
+    });
+    expect(harnessIsToolError(result)).toBe(false);
+    const data = JSON.parse(harnessResultText(result));
+    expect(data.creator).toBe("GMOCKCREATOR1");
+    expect(typeof data.creatorCount).toBe("number");
+  });
+
   it("calls mindvault_recover_catalog_cache and returns guidance", async () => {
     const result = await harness.callTool("mindvault_recover_catalog_cache");
     expect(harnessIsToolError(result)).toBe(false);
@@ -212,6 +236,26 @@ describe("MCP integration harness", () => {
     expect(parsed.currency).toBe("USDC");
     expect(typeof parsed.csv).toBe("string");
     expect(parsed.csv.split("\r\n")[0]).toContain("resourceId,title,amount");
+    expect(harnessStructuredContent(result)).toEqual(parsed);
+  });
+
+  it("exports a sanitized debug bundle with an advertised schema (#675)", async () => {
+    const { tools } = await harness.listTools();
+    const bundleTool = tools.find((t) => t.name === "mindvault_debug_bundle");
+    expect(bundleTool).toBeDefined();
+    expect((bundleTool as { outputSchema?: unknown }).outputSchema).toBeDefined();
+
+    const result = await harness.callTool("mindvault_debug_bundle", { auditLogLines: 5 });
+    expect(harnessIsToolError(result)).toBe(false);
+    const text = harnessResultText(result);
+    const parsed = JSON.parse(text);
+    expect(parsed.schema).toBe("mindvault.debug-bundle/v1");
+    expect(parsed.runtime.mockMode).toBe(true);
+    expect(parsed.config.stellarNetwork).toBe("testnet");
+    expect(parsed.auditLog.requested).toBe(5);
+    expect(Array.isArray(parsed.sanitized.rules)).toBe(true);
+    // Nothing shaped like a Stellar secret key, whatever the server had loaded.
+    expect(text).not.toMatch(/S[A-Z2-7]{55}/);
     expect(harnessStructuredContent(result)).toEqual(parsed);
   });
 

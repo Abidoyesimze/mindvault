@@ -40,13 +40,13 @@ describe("isValidProfileName", () => {
 describe("normalizeProfiles", () => {
   it("keeps valid wallet/apiKey fields and drops junk", () => {
     const out = normalizeProfiles({
-      testnet: { wallet, apiKey: "key-1", extra: "ignored" },
+      testnet: { wallet, apiKey: "key-1", network: "testnet", extra: "ignored" },
       empty: {},
       "bad name": { wallet },
       broken: { wallet: { publicKey: "GABC" } },
     });
     expect(out).toEqual({
-      testnet: { wallet, apiKey: "key-1" },
+      testnet: { wallet, apiKey: "key-1", network: "testnet" },
       empty: {},
       broken: {},
     });
