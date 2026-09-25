@@ -57,6 +57,7 @@ import {
   mockSetPrice,
   mockTransferOwnership,
   mockSetListed,
+  mockSetTags,
 } from "./mock.js";
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
@@ -71,6 +72,7 @@ import {
   optionalInt,
   optionalString,
   requiredString,
+  requiredTagArray,
   TOOL_ARGUMENT_SPECS,
   TOOLS_WITHOUT_ARG_VALIDATION,
   UnknownToolError,
@@ -2335,6 +2337,80 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   );
 }
 
+export async function setTags(resourceId: string, tags: string[]): Promise<string> {
+  const wallet = requireWallet();
+  if (_isMock()) return mockSetTags(resourceId, tags);
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    publicKey: wallet.publicKey,
+  });
+
+  let tx: Awaited<ReturnType<typeof client.set_tags>>;
+  try {
+    tx = await client.set_tags({ id: resourceId, tags });
+  } catch (err: any) {
+    if (isTimeoutError(err)) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Set tags failed for resource "${resourceId}"`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+    throw mcpError(
+      mapRegistryError({
+        operation: `Set tags failed for resource "${resourceId}"`,
+        message: err?.message || String(err),
+      }),
+    );
+  }
+
+  const result = tx.result;
+  if (result.isErr()) {
+    const err = result.unwrapErr();
+    const notFound = err.message === RegistryErrors[2].message;
+    throw mcpError(
+      mapRegistryError({
+        operation: `Set tags failed for resource "${resourceId}"`,
+        message: err.message,
+        notFound,
+      }),
+    );
+  }
+
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  const keypair = Keypair.fromSecret(wallet.secretKey);
+  let sentTx;
+  try {
+    sentTx = await tx.signAndSend({
+      signTransaction: async (xdr: string) => {
+        const { Transaction } = await import("@stellar/stellar-sdk");
+        const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+        stellarTx.sign(keypair);
+        return { signedTxXdr: stellarTx.toXDR() };
+      },
+    });
+  } catch (err: any) {
+    throw mcpError(
+      mapRegistryError({
+        operation: `Set tags submission failed for resource "${resourceId}"`,
+        message: err?.message || String(err),
+      }),
+    );
+  }
+
+  const txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+  return [
+    `Tags updated for resource "${resourceId}".`,
+    `Tags: ${tags.length > 0 ? tags.join(", ") : "(none)"}`,
+    `Tx hash: ${txHash ?? "pending"}`,
+  ].join("\n");
+}
+
 export async function registryLookup(resourceId: string): Promise<string> {
   if (_isMock())
     return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
@@ -3022,6 +3098,8 @@ async function dispatchToolOutcome(
         );
       case "mindvault_set_listed":
         return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
+      case "mindvault_set_tags":
+        return setTags(requiredString(args, "resourceId"), requiredTagArray(args, "tags"));
       case "mindvault_tx_status":
         return txStatus(requiredString(args, "txHash"));
       case "mindvault_reset":
