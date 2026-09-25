@@ -209,7 +209,7 @@ async function getCachedCatalogRows(): Promise<Awaited<ReturnType<typeof queryCa
   return rows;
 }
 
-function applyCatalogFilters<
+export function applyCatalogFilters<
   T extends {
     title: string;
     description: string | null;
