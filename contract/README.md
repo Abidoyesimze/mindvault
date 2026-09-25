@@ -134,11 +134,43 @@ returns only the `items` body for existing callers.
 pub struct FeeConfig {
     pub platform_fee_bps: u32,        // platform cut (0–MAX_FEE_BPS = 5 000 bp)
     pub royalty_bps: u32,             // creator royalty (0–MAX_FEE_BPS = 5 000 bp)
-    pub fee_recipient: Option<Address>, // where platform fee is routed; None = no platform fee
+    pub fee_recipient: Option<Address>, // where the remaining platform fee is routed
+}
+
+pub enum FeeDestination {
+    None,
+    Burn,
+    Charity(Address),
+}
+
+pub struct FeeDestinationConfig {
+    pub bps: u32,                     // share of the platform fee (0–10 000 bp)
+    pub destination: FeeDestination,
 }
 ```
 
 The registry stores a single `FeeConfig` at registry scope (not per-resource).
+The optional fee-destination policy is stored separately under
+`DataKey::FeeDestination`, so existing `FeeConfig` values and callers remain
+compatible. `bps` is a percentage of the already-computed platform fee, not of
+the gross resource price. `None` with zero bps disables the route; `Burn` and
+`Charity(address)` require a positive share. A partial route requires a
+remaining `fee_recipient`; a 100% route may leave it unset. An active route also
+requires a non-zero `platform_fee_bps`.
+
+Settlement uses integer floor rounding:
+
+```
+platform_amount = floor(price * platform_fee_bps / 10_000)
+destination_amount = floor(platform_amount * fee_destination_bps / 10_000)
+fee_recipient_amount = platform_amount - destination_amount
+```
+
+`set_fee_destination` is admin-only and emits `setdest` with the old policy,
+new policy, and ledger sequence. This event proves the authorized routing
+configuration; because the registry is non-custodial, it does not itself move,
+burn, or verify USDC. Off-chain settlement must apply the policy and publish
+its transaction evidence separately.
 `set_fee_config` enforces:
 
 - `platform_fee_bps ≤ MAX_FEE_BPS` (else `FeeBpsTooHigh`)
@@ -215,6 +247,8 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `get_flag_reason_hash(id)`                                                   | —                                                        | `id: String`                                                                                                                                                                                                                                         | `Result<String, Error>`                | Fetch the moderator dispute reason hash stored for a resource. Errors `NotFound` if absent.                                                                                                                                                                                                              |
 | `set_fee_config(config)`                                                     | `admin`                                                  | `config: FeeConfig`                                                                                                                                                                                                                                  | `Result<(), Error>`                    | Store registry fee and royalty basis points. Emits `setfee`.                                                                                                                                                                                                                                             |
 | `get_fee_config()`                                                           | —                                                        | —                                                                                                                                                                                                                                                    | `Option<FeeConfig>`                    | Fetch the current registry fee config, if set.                                                                                                                                                                                                                                                           |
+| `set_fee_destination(config)`                                                | `admin`                                                  | `config: FeeDestinationConfig` — `bps` share of the platform fee (0–10 000) and `destination` (`None`, `Burn`, or `Charity(address)`)                                                                                                                       | `Result<(), Error>`                    | Set or clear the burn/charity route without changing the base fee config. Emits `setdest`; the event records policy, not token movement.                                                                                                                                                         |
+| `get_fee_destination()`                                                      | —                                                        | —                                                                                                                                                                                                                                                    | `FeeDestinationConfig`                 | Fetch the current fee-destination policy, defaulting to `None` with zero bps.                                                                                                                                                                                                                              |
 | `repair_index(ids)`                                                          | `admin`                                                  | `ids: Vec<String>` — authoritative ordered id list                                                                                                                                                                                                   | `Result<(), Error>`                    | Rebuild the pagination index and `Count` from an admin-supplied id list. Rejects duplicates with `DuplicateInRepair`. Emits `reindex`.                                                                                                                                                                   |
 | `repair_tag_index(ids)`                                                      | `admin`                                                  | `ids: Vec<String>` — authoritative ordered id list                                                                                                                                                                                                   | `Result<(), Error>`                    | Rebuild tag indexes from registered resources. Emits `retagidx`.                                                                                                                                                                                                                                         |
 | `record_payment(settler, receipt_id, resource_id, payer, amount, tx_hash)`   | `settler` + `payer`                                      | `settler: Address` — holder of the settler role; `receipt_id: String` — unique, 1-64 bytes; `resource_id: String`; `payer: Address`; `amount: i128` — `> 0`; `tx_hash: String` — 1-128 bytes                                                         | `Result<(), Error>`                    | Record an x402/Soroban payment receipt in `Escrowed` state and index it under `(resource_id, payer)`. Emits `payment`.                                                                                                                                                                                   |
@@ -448,8 +482,8 @@ if (page.next_cursor !== null) {
 | `31` | `NetworkAlreadyInitialized`     | Network identifier has already been initialized for this contract instance.             |
 | `32` | `NetworkIdMismatch`             | Invocation network identifier does not match configured network ID.                     |
 | `33` | `NetworkNotInitialized`         | Network identifier has not been initialized.                                            |
-| `34` | `FeeBpsTooHigh`                 | A fee value exceeds the configured basis-point ceiling.                                 |
-| `35` | `TotalFeeTooHigh`               | The combined platform and royalty fees exceed the ceiling.                              |
+| `34` | `FeeBpsTooHigh`                 | A fee or fee-destination basis-point value exceeds its configured ceiling.              |
+| `35` | `TotalFeeTooHigh`               | The combined fee policy or fee-destination split is invalid.                             |
 | `36` | `CountOverflow`                 | The global resource count would overflow `u32`.                                         |
 | `37` | `BatchTooLarge`                 | `get_many` was called with more than 20 ids.                                            |
 | `38` | `DuplicateReceipt`              | A purchase receipt is already anchored for `(resource_id, buyer)`.                      |
@@ -463,7 +497,7 @@ if (page.next_cursor !== null) {
 | `46` | `AttestationHashTooLong`        | `attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes).                       |
 | `47` | `PaymentAmountMismatch`         | Payment receipt amount does not match the resource's current price.                     |
 | `48` | `DuplicateTxHash`               | A payment receipt is already stored for the supplied settlement transaction hash (`tx_hash`). |
-| `49` | `FeeConfigNotSet`               | `set_fee_recipient` was called before any fee config was set via `set_fee_config`.         |
+| `49` | `FeeConfigNotSet`               | `set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`. |
 | `50` | `AdminNominationExpired`        | The pending admin nomination is missing or has expired.                                   |
 
 ### Resource ID format and reserved words
@@ -544,7 +578,8 @@ apart, so update all three together.
 | `flagrsn`   | `(moderator: Address, reason_hash: String)`                                              | `set_flag_reason_hash()` succeeds                          |
 | `retagidx`  | `new_count: u32`                                                                         | `repair_tag_index()` succeeds                              |
 | `reactive`  | `resource id`                                                                             | `reactivate_resource()` succeeds                           |
-| `setfee`    | `FeeConfigUpdated { old_config, new_config }`                                            | `set_fee_config()` succeeds                                |
+| `setfee`    | `FeeConfigUpdated { old_config, new_config }`                                            | `set_fee_config()` or `set_fee_recipient()` succeeds       |
+| `setdest`   | `FeeDestinationUpdated { old_destination, new_destination, ledger }`                    | `set_fee_destination()` succeeds                          |
 | `ttlext`    | `()`                                                                                     | `extend_resource_ttl()` succeeds                           |
 
 The `setlisted` event payload is a two-element tuple `(old_listed, new_listed)` so
@@ -713,6 +748,7 @@ must require an explicit deployment guard.
 | `REGISTRY_NAME`            | `"mindvault-vault-registry"` | Stable name returned by `registry_info()`.                                                                                                   |
 | `MAX_FEE_BPS`              | `5_000`                      | Maximum fee in basis points (50 %). Neither `platform_fee_bps` nor `royalty_bps` may exceed this individually, and their sum may not either. |
 | `FEE_BPS_DENOM`            | `10_000`                     | Basis-point denominator. `amount * fee_bps / FEE_BPS_DENOM` converts a fee to a USDC stroop amount.                                          |
+| `MAX_FEE_DESTINATION_BPS`  | `10_000`                     | Maximum share of the platform fee routed to a burn or charity destination.                                                                         |
 
 `price` is an `i128` in **USDC stroops** (7 decimal places).
 Examples: `1_000_000` = 0.10 USDC, `10_000_000` = 1.00 USDC, `500_000` = 0.05 USDC.
