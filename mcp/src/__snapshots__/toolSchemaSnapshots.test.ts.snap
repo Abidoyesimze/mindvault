@@ -499,6 +499,408 @@ exports[`tool schema snapshots > mindvault_check_state_permissions > input schem
 
 exports[`tool schema snapshots > mindvault_check_state_permissions > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_debug_bundle > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Export Debug Bundle",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_debug_bundle > input schema 1`] = `
+{
+  "properties": {
+    "auditLogLines": {
+      "description": "Audit-log entries to include from the end of MINDVAULT_AUDIT_LOG_FILE (0–500, default 50). 0 omits the section.",
+      "examples": [
+        50,
+        200,
+      ],
+      "maximum": 500,
+      "minimum": 0,
+      "type": "integer",
+    },
+    "includeEnvironment": {
+      "description": "Include the MindVault-related environment variables with credential-like values masked. Default true; pass false to omit the section entirely.",
+      "examples": [
+        true,
+        false,
+      ],
+      "type": "boolean",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_debug_bundle > output schema 1`] = `
+{
+  "properties": {
+    "auditLog": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+        },
+        "entries": {
+          "items": {
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "exists": {
+          "type": "boolean",
+        },
+        "filePath": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "requested": {
+          "type": "integer",
+        },
+      },
+      "required": [
+        "enabled",
+        "filePath",
+        "exists",
+        "requested",
+        "entries",
+      ],
+      "type": "object",
+    },
+    "catalogCache": {
+      "properties": {
+        "maxAgeMs": {
+          "type": "integer",
+        },
+        "snapshot": {
+          "properties": {
+            "label": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "present": {
+              "type": "boolean",
+            },
+            "resourceCount": {
+              "type": "integer",
+            },
+            "savedAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "present",
+            "savedAt",
+            "resourceCount",
+            "label",
+          ],
+          "type": "object",
+        },
+        "ttlMs": {
+          "type": "integer",
+        },
+      },
+      "required": [
+        "ttlMs",
+        "maxAgeMs",
+        "snapshot",
+      ],
+      "type": "object",
+    },
+    "config": {
+      "description": "The fully resolved configuration (env var, network preset, or default).",
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+        },
+        "horizonUrl": {
+          "type": "string",
+        },
+        "registryContractId": {
+          "type": "string",
+        },
+        "registryNetworkPassphrase": {
+          "type": "string",
+        },
+        "sorobanRpcUrl": {
+          "type": "string",
+        },
+        "sponsoredAccountUrl": {
+          "type": "string",
+        },
+        "stellarNetwork": {
+          "type": "string",
+        },
+        "x402Network": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "stellarNetwork",
+        "x402Network",
+        "baseUrl",
+        "registryContractId",
+      ],
+      "type": "object",
+    },
+    "diagnostics": {
+      "items": {
+        "properties": {
+          "expected": {
+            "type": "string",
+          },
+          "message": {
+            "type": "string",
+          },
+          "severity": {
+            "enum": [
+              "error",
+              "warning",
+            ],
+            "type": "string",
+          },
+          "variable": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "variable",
+          "severity",
+          "message",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "environment": {
+      "additionalProperties": {
+        "type": "string",
+      },
+      "description": "MindVault-related environment variables; credential-like names carry "[REDACTED]". Null when includeEnvironment is false.",
+      "type": [
+        "object",
+        "null",
+      ],
+    },
+    "generatedAt": {
+      "description": "ISO-8601 instant the bundle was produced.",
+      "type": "string",
+    },
+    "install": {
+      "properties": {
+        "checks": {
+          "items": {
+            "properties": {
+              "detail": {
+                "type": "string",
+              },
+              "name": {
+                "type": "string",
+              },
+              "ok": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "name",
+              "ok",
+              "detail",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "ok": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "ok",
+        "checks",
+      ],
+      "type": "object",
+    },
+    "metrics": {
+      "description": "The mindvault_metrics snapshot; enabled=false when metrics are off.",
+      "type": "object",
+    },
+    "profiles": {
+      "properties": {
+        "active": {
+          "type": "string",
+        },
+        "entries": {
+          "items": {
+            "properties": {
+              "active": {
+                "type": "boolean",
+              },
+              "hasApiKey": {
+                "type": "boolean",
+              },
+              "hasWallet": {
+                "type": "boolean",
+              },
+              "name": {
+                "type": "string",
+              },
+              "publicKey": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "name",
+              "active",
+              "hasWallet",
+              "publicKey",
+              "hasApiKey",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "active",
+        "entries",
+      ],
+      "type": "object",
+    },
+    "runtime": {
+      "properties": {
+        "arch": {
+          "type": "string",
+        },
+        "mockMode": {
+          "type": "boolean",
+        },
+        "nodeVersion": {
+          "type": "string",
+        },
+        "platform": {
+          "type": "string",
+        },
+        "readOnlyMode": {
+          "type": "boolean",
+        },
+        "serverVersion": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "serverVersion",
+        "nodeVersion",
+        "platform",
+        "arch",
+        "mockMode",
+        "readOnlyMode",
+      ],
+      "type": "object",
+    },
+    "sanitized": {
+      "description": "What was withheld and the rules that decided it.",
+      "properties": {
+        "maskedEnvironment": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "rules": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "maskedEnvironment",
+        "rules",
+      ],
+      "type": "object",
+    },
+    "schema": {
+      "const": "mindvault.debug-bundle/v1",
+      "type": "string",
+    },
+    "state": {
+      "properties": {
+        "dir": {
+          "type": "string",
+        },
+        "file": {
+          "type": "string",
+        },
+        "permissions": {
+          "properties": {
+            "exists": {
+              "type": "boolean",
+            },
+            "expectedMode": {
+              "type": "string",
+            },
+            "isSafe": {
+              "type": "boolean",
+            },
+            "message": {
+              "type": "string",
+            },
+            "mode": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "exists",
+            "mode",
+            "expectedMode",
+            "isSafe",
+            "message",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "dir",
+        "file",
+        "permissions",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [
+    "schema",
+    "generatedAt",
+    "sanitized",
+    "runtime",
+    "config",
+    "environment",
+    "diagnostics",
+    "install",
+    "profiles",
+    "state",
+    "metrics",
+    "catalogCache",
+    "auditLog",
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_export_receipts > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -2978,6 +3380,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_check_bindings",
   "mindvault_check_consistency",
   "mindvault_check_state_permissions",
+  "mindvault_debug_bundle",
   "mindvault_export_receipts",
   "mindvault_import_wallet",
   "mindvault_list_profiles",

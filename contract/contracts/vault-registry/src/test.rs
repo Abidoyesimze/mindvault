@@ -4019,6 +4019,18 @@ fn full_workflow_emits_exactly_the_documented_events() {
     );
     record(&env, &client, &mut observed);
 
+    let r_memo = String::from_str(&env, "schemamemo");
+    client.register_with_memo(
+        &alice,
+        &r_memo,
+        &1_000i128,
+        &String::from_str(&env, "ipfs://memo"),
+        &empty_tags(&env),
+        &None,
+        &Some(BytesN::from_array(&env, &[7u8; 32])),
+    ); // -> "register", "regmemo"
+    record(&env, &client, &mut observed);
+
     client.set_price(&r0, &200i128);
     record(&env, &client, &mut observed);
 
@@ -8135,7 +8147,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 27] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -8178,8 +8190,14 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
         (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
         (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
-        (DataKey::AttestationHash(id), "AttestationHash", 2),
+        (DataKey::AttestationHash(id.clone()), "AttestationHash", 2),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
+        (
+            DataKey::CreatorListedCount(who.clone()),
+            "CreatorListedCount",
+            2,
+        ),
+        (DataKey::MemoHash(id), "MemoHash", 2),
     ]
 }
 
@@ -8221,7 +8239,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        25,
+        27,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -8252,6 +8270,8 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::PaymentTxHash(_) => "PaymentTxHash",
             DataKey::AttestationHash(_) => "AttestationHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
+            DataKey::CreatorListedCount(_) => "CreatorListedCount",
+            DataKey::MemoHash(_) => "MemoHash",
         };
         assert_eq!(
             matched, *name,
@@ -8265,7 +8285,7 @@ fn same_string_addresses_a_different_entry_per_key_variant() {
     let (env, _creator, client) = setup();
     let shared = String::from_str(&env, "collide");
 
-    // Five variants take a bare String. If any two encoded to the same address,
+    // Six variants take a bare String. If any two encoded to the same address,
     // one would overwrite another and a resource id could clobber a tag index.
     env.as_contract(&client.address, || {
         let keys = [
@@ -8274,6 +8294,7 @@ fn same_string_addresses_a_different_entry_per_key_variant() {
             DataKey::TagIndex(shared.clone()),
             DataKey::DisputeFlag(shared.clone()),
             DataKey::FlagReasonHash(shared.clone()),
+            DataKey::MemoHash(shared.clone()),
         ];
         for (marker, key) in keys.iter().enumerate() {
             env.storage().persistent().set(key, &(marker as u32));
@@ -8299,6 +8320,7 @@ fn address_keyed_variants_do_not_collide_for_one_address() {
             DataKey::CreatorTerms(who.clone()),
             DataKey::CreatorResources(who.clone()),
             DataKey::CreatorCount(who.clone()),
+            DataKey::CreatorListedCount(who.clone()),
             DataKey::Verifier(who.clone()),
             DataKey::Moderator(who.clone()),
         ];
@@ -9510,3 +9532,5 @@ include!("test/storage_footprint.rs");
 
 include!("test/auth_fixtures.rs");
 include!("test/tombstone_read.rs");
+include!("test/creator_listed_count.rs");
+include!("test/memo_hash.rs");

@@ -78,6 +78,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_import_wallet: {},
   mindvault_rotate_publisher_key: {},
   mindvault_verify_install: {},
+  mindvault_debug_bundle: { auditLogLines: 50, includeEnvironment: true },
   mindvault_recover_catalog_cache: {},
 };
 
@@ -473,5 +474,20 @@ describe("mindvault_export_receipts arguments", () => {
 
   it("rejects a limit outside the supported range", () => {
     expect(expectInvalid("mindvault_export_receipts", { limit: 0 }).issues).toHaveLength(1);
+  });
+});
+
+describe("mindvault_debug_bundle", () => {
+  it("accepts an empty call and both arguments", () => {
+    expect(() => validateToolArgs("mindvault_debug_bundle", {})).not.toThrow();
+    expect(() =>
+      validateToolArgs("mindvault_debug_bundle", { auditLogLines: 0, includeEnvironment: false }),
+    ).not.toThrow();
+  });
+
+  it("rejects an audit line count outside 0..500 and a non-boolean flag", () => {
+    expectInvalid("mindvault_debug_bundle", { auditLogLines: 501 });
+    expectInvalid("mindvault_debug_bundle", { auditLogLines: -1 });
+    expectInvalid("mindvault_debug_bundle", { includeEnvironment: "maybe" });
   });
 });

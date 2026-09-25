@@ -88,6 +88,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Resource lifecycle ────────────────────────────────────────────────
     ("register", "creator"),
     ("register_with_hash", "creator"),
+    ("register_with_memo", "creator"),
     ("register_batch", "creator"),
     ("set_price", "creator"),
     ("update_metadata", "creator"),
@@ -117,6 +118,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("count", "—"),
     ("listed_count", "—"),
     ("creator_resource_count", "—"),
+    ("creator_listed_count", "—"),
     // ── Paginated catalog ─────────────────────────────────────────────────
     ("list", "—"),
     ("list_page", "—"),
@@ -124,12 +126,14 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_by_creator", "—"),
     ("list_by_tag", "—"),
     ("list_by_dispute_status", "—"),
+    ("list_by_verification_status", "—"),
     // ── Verification ──────────────────────────────────────────────────────
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
     ("is_verifier", "—"),
     ("set_verification_status", "verifier"),
     ("get_attestation_hash", "—"),
+    ("get_memo_hash", "—"),
     // ── Registry introspection ────────────────────────────────────────────
     ("registry_info", "—"),
     ("contract_version", "—"),
@@ -252,6 +256,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
 #[cfg(test)]
 pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("register", "Resource"),
+    ("regmemo", "memo_hash: BytesN<32>"),
     (
         "setprice",
         "PriceUpdated { id, old_price, new_price, updater }",
@@ -564,6 +569,16 @@ pub enum DataKey {
     AttestationHash(String),
     /// Ledger sequence at which the pending admin nomination expires.
     PendingAdminExpiry,
+    /// Number of `creator`'s resources currently in the `Listed` state. Kept
+    /// in step with `ListedCount` on every listed-state transition and moved
+    /// between owners on transfer, so it is the per-creator view of
+    /// `listed_count` in the same way `CreatorCount` is of `count`.
+    CreatorListedCount(Address),
+    /// Optional 32-byte memo hash recorded at registration through
+    /// `register_with_memo`, for example the `MEMO_HASH` of the transaction
+    /// that announced or paid for the registration. Written once and never
+    /// mutated; `None` for resources registered through the other entry points.
+    MemoHash(String),
 }
 
 /// Event data emitted when a resource's metadata pointer is updated.
@@ -815,7 +830,8 @@ impl VaultRegistry {
         metadata: String,
         tags: Vec<String>,
     ) -> Result<(), Error> {
-        Self::register_internal(env, creator, id, price, metadata, tags, None)
+        creator.require_auth();
+        Self::register_internal(env, creator, id, price, metadata, tags, None, None)
     }
 
     /// Register a new resource together with an immutable digest of its
@@ -833,7 +849,40 @@ impl VaultRegistry {
         tags: Vec<String>,
         content_hash: Option<String>,
     ) -> Result<(), Error> {
-        Self::register_internal(env, creator, id, price, metadata, tags, content_hash)
+        creator.require_auth();
+        Self::register_internal(env, creator, id, price, metadata, tags, content_hash, None)
+    }
+
+    /// Register a new resource together with an optional content hash and an
+    /// optional 32-byte memo hash. The memo hash is the registration's link to
+    /// an off-chain record (typically the `MEMO_HASH` of the Stellar
+    /// transaction that announced or paid for it) and is written once at
+    /// registration; nothing can change it afterwards. Read it back with
+    /// `get_memo_hash`. When present it is also emitted in a `regmemo` event.
+    ///
+    /// All other validation matches `register_with_hash`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_with_memo(
+        env: Env,
+        creator: Address,
+        id: String,
+        price: i128,
+        metadata: String,
+        tags: Vec<String>,
+        content_hash: Option<String>,
+        memo_hash: Option<BytesN<32>>,
+    ) -> Result<(), Error> {
+        creator.require_auth();
+        Self::register_internal(
+            env,
+            creator,
+            id,
+            price,
+            metadata,
+            tags,
+            content_hash,
+            memo_hash,
+        )
     }
 
     /// Register multiple resources in a single transaction. The batch is capped
@@ -877,6 +926,7 @@ impl VaultRegistry {
                 item.metadata.clone(),
                 item.tags.clone(),
                 item.content_hash.clone(),
+                None,
             );
 
             match result {
@@ -1054,6 +1104,19 @@ impl VaultRegistry {
         hash
     }
 
+    /// Read the memo hash recorded for a resource at registration, if it was
+    /// registered through `register_with_memo` with one. `None` for every
+    /// other resource and for ids that are unknown or malformed.
+    pub fn get_memo_hash(env: Env, id: String) -> Option<BytesN<32>> {
+        Self::validate_resource_id(&id).ok()?;
+        let key = DataKey::MemoHash(id);
+        let hash: Option<BytesN<32>> = env.storage().persistent().get(&key);
+        if hash.is_some() {
+            Self::bump_persistent(&env, &key);
+        }
+        hash
+    }
+
     /// Replace a resource's discovery tags. Only the creator may call this.
     /// Does not modify `metadata` (the off-chain content pointer).
     /// Tags are normalized to lowercase ASCII before storage; the normalized
@@ -1134,7 +1197,7 @@ impl VaultRegistry {
         let previous_owner = resource.creator.clone();
         resource.creator = new_creator.clone();
         Self::save(&env, &mut resource);
-        Self::move_creator_index(&env, &previous_owner, &new_creator, &id);
+        Self::move_creator_index(&env, &previous_owner, &new_creator, &id, resource.listed);
 
         let pending_key = DataKey::PendingTransfer(id.clone());
         if env.storage().persistent().has(&pending_key) {
@@ -1183,7 +1246,7 @@ impl VaultRegistry {
         let previous_owner = resource.creator.clone();
         resource.creator = pending_owner.clone();
         Self::save(&env, &mut resource);
-        Self::move_creator_index(&env, &previous_owner, &pending_owner, &id);
+        Self::move_creator_index(&env, &previous_owner, &pending_owner, &id, resource.listed);
 
         env.storage().persistent().remove(&key);
 
@@ -1510,6 +1573,14 @@ impl VaultRegistry {
     /// never-decremented `count()`).
     pub fn creator_resource_count(env: Env, creator: Address) -> u32 {
         Self::creator_count(&env, &creator)
+    }
+
+    /// Number of resources owned by `creator` that are currently in the
+    /// `Listed` state. The per-creator counterpart of `listed_count`: it
+    /// follows every listed-state transition (delist, freeze, dispute,
+    /// reactivate, tombstone) and moves between owners on transfer.
+    pub fn creator_listed_count(env: Env, creator: Address) -> u32 {
+        Self::creator_listed(&env, &creator)
     }
 
     /// Return the resource ids tagged with `tag` (normalized to lowercase),
@@ -2932,11 +3003,13 @@ impl VaultRegistry {
         resource.state = next;
         resource.listed = becomes_listed;
         Self::save(env, resource);
-        // Maintain the listed count index.
+        // Maintain the listed count indexes, global and per creator.
         if !was_listed && becomes_listed {
             Self::bump_listed_count(env, 1);
+            Self::bump_creator_listed_count(env, &resource.creator, 1);
         } else if was_listed && !becomes_listed {
             Self::bump_listed_count(env, -1);
+            Self::bump_creator_listed_count(env, &resource.creator, -1);
         }
     }
 
@@ -3033,7 +3106,13 @@ impl VaultRegistry {
     /// Move a resource id from `previous_owner`'s index/count to `new_owner`'s,
     /// keeping `list_by_creator` and `creator_resource_count` in sync with
     /// `Resource.creator` on every ownership change.
-    fn move_creator_index(env: &Env, previous_owner: &Address, new_owner: &Address, id: &String) {
+    fn move_creator_index(
+        env: &Env,
+        previous_owner: &Address,
+        new_owner: &Address,
+        id: &String,
+        listed: bool,
+    ) {
         Self::remove_from_creator_index(env, previous_owner, id);
         let prev_count = Self::creator_count(env, previous_owner);
         Self::set_creator_count(env, previous_owner, prev_count.saturating_sub(1));
@@ -3041,6 +3120,40 @@ impl VaultRegistry {
         Self::append_to_creator_index(env, new_owner, id.clone());
         let new_count = Self::creator_count(env, new_owner);
         Self::set_creator_count(env, new_owner, new_count + 1);
+
+        // A listed resource changing hands is one fewer listed for the previous
+        // owner and one more for the new one; the global count is unchanged.
+        if listed {
+            Self::bump_creator_listed_count(env, previous_owner, -1);
+            Self::bump_creator_listed_count(env, new_owner, 1);
+        }
+    }
+
+    fn creator_listed(env: &Env, creator: &Address) -> u32 {
+        env.storage()
+            .instance()
+            .get::<_, u32>(&DataKey::CreatorListedCount(creator.clone()))
+            .unwrap_or(0)
+    }
+
+    /// Adjust `creator`'s listed-count index by a signed delta. Same contract
+    /// as `bump_listed_count`: the delta is always paired with a prior state
+    /// check, so underflow would be a logic error and panics.
+    fn bump_creator_listed_count(env: &Env, creator: &Address, delta: i32) {
+        let current = Self::creator_listed(env, creator);
+        let next = if delta > 0 {
+            current
+                .checked_add(delta as u32)
+                .expect("creator listed count overflow")
+        } else {
+            current
+                .checked_sub(delta.unsigned_abs())
+                .expect("creator listed count underflow")
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::CreatorListedCount(creator.clone()), &next);
+        Self::bump_instance(env);
     }
 
     fn creator_count(env: &Env, creator: &Address) -> u32 {
@@ -3223,6 +3336,12 @@ impl VaultRegistry {
         }
     }
 
+    /// Shared registration body. Callers authorize `creator` themselves:
+    /// the single-resource entry points do it once per call and
+    /// `register_batch` once for the whole batch, so a second `require_auth`
+    /// here would be rejected by the host as a duplicate authorization in
+    /// the same frame.
+    #[allow(clippy::too_many_arguments)]
     fn register_internal(
         env: Env,
         creator: Address,
@@ -3231,8 +3350,8 @@ impl VaultRegistry {
         metadata: String,
         tags: Vec<String>,
         content_hash: Option<String>,
+        memo_hash: Option<BytesN<32>>,
     ) -> Result<(), Error> {
-        creator.require_auth();
         Self::require_not_paused(&env)?;
         Self::validate_price(price)?;
         Self::validate_resource_id(&id)?;
@@ -3275,8 +3394,9 @@ impl VaultRegistry {
         env.storage().persistent().set(&key, &resource);
         Self::bump_persistent(&env, &key);
 
-        // New resources start Listed — track in the listed count index.
+        // New resources start Listed — track in the listed count indexes.
         Self::bump_listed_count(&env, 1);
+        Self::bump_creator_listed_count(&env, &creator, 1);
 
         let count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
         let idx_key = DataKey::Index(count);
@@ -3310,7 +3430,15 @@ impl VaultRegistry {
             tags: norm_tags,
             content_hash,
         };
-        env.events().publish((symbol_short!("register"), id), event);
+        env.events()
+            .publish((symbol_short!("register"), id.clone()), event);
+
+        if let Some(memo) = memo_hash {
+            let memo_key = DataKey::MemoHash(id.clone());
+            env.storage().persistent().set(&memo_key, &memo);
+            Self::bump_persistent(&env, &memo_key);
+            env.events().publish((symbol_short!("regmemo"), id), memo);
+        }
         Ok(())
     }
 }

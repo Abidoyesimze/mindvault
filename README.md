@@ -84,6 +84,7 @@ Available tools:
 | `mindvault_tx_status`          | Look up a Stellar transaction status by hash                               | `"Check tx a1b2c3d4..."`                                        |
 | `mindvault_reset`              | Clear the persisted wallet and publisher API key; needs confirm: true      | `"Reset my agent credentials"`                                  |
 | `mindvault_verify_install`     | Verify the MCP server install and configuration (local checks, no network) | `"Verify my install"`                                           |
+| `mindvault_debug_bundle`       | Export a sanitized debug bundle for bug reports (secrets removed, offline) | `"Export a debug bundle for this ticket"`                       |
 
 ### Install
 

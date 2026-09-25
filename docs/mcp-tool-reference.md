@@ -15,7 +15,7 @@ For structured JSON results (`structuredContent` + `outputSchema`) see
 For client installation and configuration see
 [mcp-client-configs.md](mcp-client-configs.md).
 
-**37 tools** as of last generation.
+**38 tools** as of last generation.
 
 ---
 
@@ -92,13 +92,14 @@ For client installation and configuration see
 
 ## Operations
 
-| Tool                             | Description                                                                                                                                                                                                                                                                                                                                                  | Structured |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
-| `mindvault_agent_status`         | Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.                                                                                                                                                      | yes        |
-| `mindvault_network_profile`      | Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.                                                                                                                          | yes        |
-| `mindvault_metrics`              | Return opt-in tool-level metrics: per-tool call/error counts and durations, plus payment attempt/failure totals. Enable by setting MINDVAULT_METRICS=1 on the server. Output contains only tool names, counts, and durations — never arguments, wallets, or API keys. Pass reset=true to clear counters after reading.                                       | yes        |
-| `mindvault_rotate_publisher_key` | Rotate the publisher API key for the active profile. Calls the MindVault server rotation endpoint (POST /publishers/rotate-key), stores the new key in the state file, and returns the updated publisher ID. The old key is invalidated server-side. Requires an existing registration (mindvault_register).                                                 | text only  |
-| `mindvault_verify_install`       | Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem. | text only  |
+| Tool                             | Description                                                                                                                                                                                                                                                                                                                                                                                                                    | Structured |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| `mindvault_agent_status`         | Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.                                                                                                                                                                                                                        | yes        |
+| `mindvault_network_profile`      | Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.                                                                                                                                                                                            | yes        |
+| `mindvault_metrics`              | Return opt-in tool-level metrics: per-tool call/error counts and durations, plus payment attempt/failure totals. Enable by setting MINDVAULT_METRICS=1 on the server. Output contains only tool names, counts, and durations — never arguments, wallets, or API keys. Pass reset=true to clear counters after reading.                                                                                                         | yes        |
+| `mindvault_rotate_publisher_key` | Rotate the publisher API key for the active profile. Calls the MindVault server rotation endpoint (POST /publishers/rotate-key), stores the new key in the state file, and returns the updated publisher ID. The old key is invalidated server-side. Requires an existing registration (mindvault_register).                                                                                                                   | text only  |
+| `mindvault_verify_install`       | Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.                                                                   | text only  |
+| `mindvault_debug_bundle`         | Export a sanitized debug bundle to attach to a bug report or support ticket: resolved configuration, startup diagnostics, install checks, a profile summary (addresses only), state-file permissions, metrics, catalog cache status, and the tail of the audit log. Secret keys, API keys, and tokens never enter the bundle; public keys and contract ids are kept so it stays useful. Local and read-only, no network calls. | yes        |
 
 ## Other
 
@@ -108,4 +109,4 @@ For client installation and configuration see
 
 ---
 
-_This file was generated from `mcp/src/tools.ts` — 37 tools._
+_This file was generated from `mcp/src/tools.ts` — 38 tools._

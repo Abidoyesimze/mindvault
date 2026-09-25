@@ -215,6 +215,26 @@ describe("MCP integration harness", () => {
     expect(harnessStructuredContent(result)).toEqual(parsed);
   });
 
+  it("exports a sanitized debug bundle with an advertised schema (#675)", async () => {
+    const { tools } = await harness.listTools();
+    const bundleTool = tools.find((t) => t.name === "mindvault_debug_bundle");
+    expect(bundleTool).toBeDefined();
+    expect((bundleTool as { outputSchema?: unknown }).outputSchema).toBeDefined();
+
+    const result = await harness.callTool("mindvault_debug_bundle", { auditLogLines: 5 });
+    expect(harnessIsToolError(result)).toBe(false);
+    const text = harnessResultText(result);
+    const parsed = JSON.parse(text);
+    expect(parsed.schema).toBe("mindvault.debug-bundle/v1");
+    expect(parsed.runtime.mockMode).toBe(true);
+    expect(parsed.config.stellarNetwork).toBe("testnet");
+    expect(parsed.auditLog.requested).toBe(5);
+    expect(Array.isArray(parsed.sanitized.rules)).toBe(true);
+    // Nothing shaped like a Stellar secret key, whatever the server had loaded.
+    expect(text).not.toMatch(/S[A-Z2-7]{55}/);
+    expect(harnessStructuredContent(result)).toEqual(parsed);
+  });
+
   it("returns structuredContent alongside preview and registry lookup text (#553)", async () => {
     const preview = await harness.callTool("mindvault_preview", { resourceId: "mock-1" });
     expect(harnessIsToolError(preview)).toBe(false);
