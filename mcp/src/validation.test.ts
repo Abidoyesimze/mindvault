@@ -60,6 +60,8 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_check_consistency: { resourceId: "res-001" },
   mindvault_registry_lookup: { resourceId: "res-001" },
   mindvault_registry_list: {},
+  mindvault_registry_count: {},
+  mindvault_registry_count: {},
   mindvault_tx_status: { txHash: VALID_SHA256 },
   mindvault_reset: {},
   mindvault_backup_state: { passphrase: "correct-horse" },

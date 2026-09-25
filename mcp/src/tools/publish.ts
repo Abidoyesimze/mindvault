@@ -1,4 +1,5 @@
 import { createRegistryClient, Errors as RegistryErrors } from "@mindvault/registry-client";
+import type { BatchRegisterItem } from "@mindvault/registry-client";
 import {
   activeProfile,
   activeProfileName,
@@ -30,8 +31,7 @@ import {
 import { dryRunPublish, dryRunBuy } from "../dryRun.js";
 import { safeErrorMessage } from "../redaction.js";
 import { recordPurchase } from "../purchaseHistory.js";
-import { mockSetListed, mockSetPrice, mockTransferOwnership, mockUpdateMetadata } from "../mock.js";
-import { usdcToStroops as toStroops } from "../usdcAmount.js";
+import { mockSetListed, mockSetPrice, mockTransferOwnership, mockUpdateMetadata, mockPublishBatch } from "../mock.js";
 
 /**
  * Decimal USDC as on-chain stroops, throwing on an amount the shared converter
@@ -623,6 +623,328 @@ export async function transferOwnership(resourceId: string, newCreator: string):
     null,
     2,
   );
+}
+
+/** Maximum number of resources per batch — mirrors MAX_BATCH_REGISTER in the contract. */
+export const MAX_BATCH_SIZE = 10;
+
+export interface BatchPublishItem {
+  title: string;
+  description?: string;
+  price: string;
+  externalUrl: string;
+}
+
+export interface BatchPublishItemResult {
+  index: number;
+  title: string;
+  id: string | null;
+  verificationStatus: "approved" | "rejected" | "error";
+  onchainStatus: string | null;
+  flags?: string[];
+  error?: string;
+}
+
+export interface BatchPublishSummary {
+  requested: number;
+  verified: number;
+  rejected: number;
+  errored: number;
+  onchainStatus: string;
+  txHash: string | null;
+  items: BatchPublishItemResult[];
+}
+
+/**
+ * Publish multiple resources and pay for verification for each, then register
+ * all verified resources on-chain in a single `register_batch` call — one
+ * wallet approval covers the whole batch.
+ *
+ * Flow:
+ *   1. Create each resource via POST /resources (collects IDs).
+ *   2. Pay the x402 verification fee for each resource.
+ *   3. Collect the verified ones into a BatchRegisterItem[].
+ *   4. Call register_batch once on-chain (single Soroban tx / wallet sign).
+ */
+export async function publishBatch(
+  items: BatchPublishItem[],
+  onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+): Promise<string> {
+  if (_isMock()) return mockPublishBatch(items);
+
+  if (items.length === 0) throw new Error("items must not be empty.");
+  if (items.length > MAX_BATCH_SIZE) {
+    throw new Error(
+      `Batch size ${items.length} exceeds maximum of ${MAX_BATCH_SIZE} resources per call.`,
+    );
+  }
+
+  const wallet = requireWallet();
+  const apiKey = requireApiKey();
+
+  const totalSteps = items.length * 2 + 2; // create + verify per item + batch register + finalize
+  let step = 0;
+
+  // ── Step 1: Create all resources ─────────────────────────────────────────
+  const results: BatchPublishItemResult[] = [];
+  const createdResources: Array<{ resource: any; item: BatchPublishItem; index: number }> = [];
+
+  for (let i = 0; i < items.length; i++) {
+    step++;
+    await onProgress?.(
+      step,
+      totalSteps,
+      `Creating resource ${i + 1}/${items.length}: "${items[i].title}"`,
+    );
+
+    const createRes = await jsonFetch(`${BASE_URL}/resources`, {
+      method: "POST",
+      headers: { "x-api-key": apiKey },
+      body: JSON.stringify({
+        title: items[i].title,
+        description: items[i].description,
+        price: items[i].price,
+        externalUrl: items[i].externalUrl,
+      }),
+    });
+
+    if (!createRes.ok) {
+      results.push({
+        index: i,
+        title: items[i].title,
+        id: null,
+        verificationStatus: "error",
+        onchainStatus: null,
+        error: `Create failed [${createRes.status}]: ${JSON.stringify(createRes.data)}`,
+      });
+      continue;
+    }
+
+    createdResources.push({ resource: createRes.data, item: items[i], index: i });
+  }
+
+  // ── Step 2: Verify all created resources ─────────────────────────────────
+  // Check funds upfront against the per-verification price.
+  const statusRes = await jsonFetch(`${BASE_URL}/agent/status`);
+  const verificationPrice = statusRes.ok ? statusRes.data?.agent?.pricePerVerification : null;
+  if (verificationPrice != null) {
+    const shortMsg = await insufficientFundsMessage(
+      wallet,
+      verificationPrice,
+      `pay ${createdResources.length} verification fee(s)`,
+    );
+    if (shortMsg) {
+      const createdIds = createdResources.map((r) => r.resource.id).join(", ");
+      return (
+        `${shortMsg}\n` +
+        `Resources created (ids: ${createdIds}) but verification not attempted. ` +
+        `Use mindvault_publish_status to retry each resource once funded.`
+      );
+    }
+  }
+
+  const paidFetch = makePaidFetch(wallet);
+  const verifiedItems: BatchRegisterItem[] = [];
+
+  for (const { resource, item, index } of createdResources) {
+    step++;
+    await onProgress?.(
+      step,
+      totalSteps,
+      `Verifying resource ${index + 1}/${items.length}: "${item.title}"`,
+    );
+
+    let verifyRes: Response;
+    try {
+      verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: `Title: ${item.title}\nDescription: ${item.description ?? ""}\nURL: ${item.externalUrl}`,
+          resourceId: resource.id,
+        }),
+      });
+    } catch (err) {
+      metrics.recordPayment(false);
+      results.push({
+        index,
+        title: item.title,
+        id: resource.id,
+        verificationStatus: "error",
+        onchainStatus: null,
+        error: safeErrorMessage(err),
+      });
+      continue;
+    }
+
+    metrics.recordPayment(verifyRes.ok);
+    const verifyData = await verifyRes.json().catch(() => null);
+
+    if (!verifyRes.ok) {
+      results.push({
+        index,
+        title: item.title,
+        id: resource.id,
+        verificationStatus: "error",
+        onchainStatus: null,
+        error: `Verification payment failed [${verifyRes.status}]: ${JSON.stringify(verifyData)}`,
+      });
+      continue;
+    }
+
+    const isOriginal: boolean = verifyData?.isOriginal ?? false;
+    const flags: string[] = verifyData?.flags ?? [];
+
+    if (!isOriginal) {
+      results.push({
+        index,
+        title: item.title,
+        id: resource.id,
+        verificationStatus: "rejected",
+        onchainStatus: null,
+        flags,
+      });
+      continue;
+    }
+
+    // Verified — queue for batch on-chain registration.
+    verifiedItems.push({
+      id: resource.id,
+      price: usdcToStroops(item.price),
+      metadata: resource.accessUrl ?? item.externalUrl,
+      tags: [],
+      content_hash: null,
+    });
+    results.push({
+      index,
+      title: item.title,
+      id: resource.id,
+      verificationStatus: "approved",
+      onchainStatus: "pending",
+      flags: flags.length > 0 ? flags : undefined,
+    });
+  }
+
+  // ── Step 3: Batch register verified resources on-chain ───────────────────
+  step++;
+  await onProgress?.(
+    step,
+    totalSteps,
+    `Registering ${verifiedItems.length} verified resource(s) on-chain`,
+  );
+
+  let txHash: string | null = null;
+  let batchOnchainStatus = "skipped";
+
+  if (verifiedItems.length > 0) {
+    const client = createRegistryClient({
+      contractId: REGISTRY_CONTRACT_ID,
+      rpcUrl: SOROBAN_RPC_URL,
+      networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    });
+
+    let batchTx: any;
+    try {
+      batchTx = await (client as any).register_batch({
+        creator: wallet.publicKey,
+        items: verifiedItems,
+      });
+    } catch (err: any) {
+      if (isTimeoutError(err)) {
+        throw mcpError(
+          mapTransportError({
+            operation: "register_batch failed",
+            source: "soroban",
+            error: err,
+          }),
+        );
+      }
+      throw mcpError(
+        mapRegistryError({
+          operation: "register_batch failed",
+          message: err?.message || String(err),
+        }),
+      );
+    }
+
+    const batchResult = batchTx.result;
+    if (batchResult && typeof batchResult.isErr === "function" && batchResult.isErr()) {
+      const err = batchResult.unwrapErr();
+      throw mcpError(
+        mapRegistryError({
+          operation: "register_batch failed",
+          message: err?.message || String(err),
+        }),
+      );
+    }
+
+    // Sign and send the batch transaction (single wallet approval).
+    const { Keypair, Transaction } = await import("@stellar/stellar-sdk");
+    const keypair = Keypair.fromSecret(wallet.secretKey);
+    try {
+      const sentTx = await batchTx.signAndSend({
+        signTransaction: async (xdr: string) => {
+          const tx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+          tx.sign(keypair);
+          return { signedTxXdr: tx.toXDR() };
+        },
+      });
+      txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+      batchOnchainStatus = "registered";
+    } catch (err: any) {
+      throw mcpError(
+        mapRegistryError({
+          operation: "register_batch submission failed",
+          message: err?.message || String(err),
+        }),
+      );
+    }
+
+    // Update per-item onchain status from the batch result data.
+    const batchResultData =
+      batchResult && typeof batchResult.unwrap === "function" ? batchResult.unwrap() : null;
+    const succeededIds = new Set<string>(
+      batchResultData?.succeeded ?? verifiedItems.map((v) => v.id),
+    );
+    const failedPairs: Array<[number, number]> = batchResultData?.failed ?? [];
+
+    for (const r of results) {
+      if (r.verificationStatus === "approved") {
+        if (succeededIds.has(r.id!)) {
+          r.onchainStatus = "registered";
+        } else {
+          const failedEntry = failedPairs.find(([idx]) => verifiedItems[idx]?.id === r.id);
+          const errCode = failedEntry ? failedEntry[1] : 0;
+          r.onchainStatus = `failed (error code ${errCode})`;
+        }
+      }
+    }
+  } else {
+    for (const r of results) {
+      if (r.verificationStatus === "approved" && r.onchainStatus === "pending") {
+        r.onchainStatus = "skipped";
+      }
+    }
+  }
+
+  step++;
+  await onProgress?.(step, totalSteps, "Done");
+
+  const approved = results.filter((r) => r.verificationStatus === "approved");
+  const rejected = results.filter((r) => r.verificationStatus === "rejected");
+  const errored = results.filter((r) => r.verificationStatus === "error");
+
+  const summary: BatchPublishSummary = {
+    requested: items.length,
+    verified: approved.length,
+    rejected: rejected.length,
+    errored: errored.length,
+    onchainStatus: batchOnchainStatus,
+    txHash,
+    items: results,
+  };
+
+  return JSON.stringify(summary, null, 2);
 }
 
 export async function setListed(resourceId: string, listed: boolean): Promise<string> {

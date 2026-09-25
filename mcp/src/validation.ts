@@ -193,6 +193,10 @@ const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
 export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
   "mindvault_publish_status",
   "mindvault_purchase_history",
+  // items is an array of objects — the generic validator handles only flat
+  // string/flag/hash/integer/enum/tag_array fields. Argument shape is enforced
+  // by the input schema in tools.ts and validated inline in the dispatch handler.
+  "mindvault_publish_batch",
 ];
 
 /**
@@ -271,6 +275,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_registry_list: {
     start: { kind: "integer", min: 0 },
     limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
+  },
+  mindvault_registry_count: {
+    creator: { kind: "string" },
   },
   mindvault_tx_status: { txHash: { kind: "hash", required: true, bareHex: true } },
   // `confirm` is what resetGuard.isResetConfirmed reads. It was advertised in

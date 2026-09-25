@@ -50,6 +50,7 @@ import {
 import {
   createMockFetch,
   mockEnabledFromEnv,
+  mockRegistryCount,
   mockRegistryLookup,
   mockRegistryList,
   mockUpdateMetadata,
@@ -174,6 +175,7 @@ import {
   recordCatalogSnapshot,
   recordPreviewSnapshot,
 } from "./catalogCache.js";
+import { publishBatch, type BatchPublishItem } from "./tools/publish.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -2365,6 +2367,89 @@ export async function registryList(start: number, limit: number): Promise<string
   );
 }
 
+export async function registryCount(creator?: string): Promise<string> {
+  if (_isMock()) return mockRegistryCount(creator, REGISTRY_CONTRACT_ID);
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let count: number;
+  let listedCount: number;
+  let creatorCount: number | null = null;
+
+  try {
+    const countTx = await client.count();
+    count = Number(countTx.result);
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `Registry count() failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  try {
+    // listed_count is present in the Rust contract but not yet included in the
+    // generated TypeScript bindings; access via `as any` until bindings are
+    // regenerated with `pnpm contract:bindings`.
+    const listedTx = await (client as any).listed_count();
+    listedCount = Number(listedTx.result);
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `Registry listed_count() failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  if (creator) {
+    try {
+      const creatorTx = await (client as any).creator_resource_count({ creator });
+      creatorCount = Number(creatorTx.result);
+    } catch (err: unknown) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Registry creator_resource_count() failed for "${creator}" (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+  }
+
+  const payload: {
+    source: string;
+    count: number;
+    listedCount: number;
+    creatorCount?: number;
+    creator?: string;
+    contract: string;
+    network: string;
+    rpc: string;
+  } = {
+    source: "on-chain",
+    count,
+    listedCount,
+    contract: REGISTRY_CONTRACT_ID,
+    network: REGISTRY_NETWORK_PASSPHRASE,
+    rpc: SOROBAN_RPC_URL,
+  };
+
+  if (creator != null) {
+    payload.creator = creator;
+    payload.creatorCount = creatorCount!;
+  }
+
+  return JSON.stringify(payload, null, 2);
+}
+
 export async function recoverCatalogCache(): Promise<string> {
   if (_isMock()) {
     return JSON.stringify(
@@ -2640,6 +2725,7 @@ const STATE_MUTATING_TOOLS = new Set([
   "mindvault_use_profile",
   "mindvault_register",
   "mindvault_publish",
+  "mindvault_publish_batch",
   "mindvault_buy",
   "mindvault_register_onchain",
   "mindvault_update_metadata",
@@ -2736,6 +2822,33 @@ async function dispatchToolOutcome(
         });
       case "mindvault_publish_status":
         return publishStatus(rawRecord, onProgress);
+      case "mindvault_publish_batch": {
+        const batchItems = rawRecord.items;
+        if (!Array.isArray(batchItems) || batchItems.length === 0) {
+          throw new Error("mindvault_publish_batch: items must be a non-empty array.");
+        }
+        const typedItems: BatchPublishItem[] = batchItems.map((item: any, i: number) => {
+          if (!item || typeof item !== "object") {
+            throw new Error(`mindvault_publish_batch: items[${i}] must be an object.`);
+          }
+          if (typeof item.title !== "string" || item.title.trim() === "") {
+            throw new Error(`mindvault_publish_batch: items[${i}].title must be a non-empty string.`);
+          }
+          if (typeof item.price !== "string" || item.price.trim() === "") {
+            throw new Error(`mindvault_publish_batch: items[${i}].price must be a non-empty string.`);
+          }
+          if (typeof item.externalUrl !== "string" || item.externalUrl.trim() === "") {
+            throw new Error(`mindvault_publish_batch: items[${i}].externalUrl must be a non-empty string.`);
+          }
+          return {
+            title: item.title,
+            description: typeof item.description === "string" ? item.description : undefined,
+            price: item.price,
+            externalUrl: item.externalUrl,
+          };
+        });
+        return publishBatch(typedItems, onProgress);
+      }
       case "mindvault_buy":
         return buy(
           requiredString(dryRunArgs, "resourceId"),
@@ -2770,6 +2883,8 @@ async function dispatchToolOutcome(
           optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
           optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
         );
+      case "mindvault_registry_count":
+        return registryCount(optionalString(args, "creator"));
       case "mindvault_update_metadata":
         return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
       case "mindvault_set_price":

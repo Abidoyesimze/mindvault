@@ -55,6 +55,7 @@ describe("MCP integration harness", () => {
     expect(names).toContain("mindvault_registry_info");
     expect(names).toContain("mindvault_registry_lookup");
     expect(names).toContain("mindvault_registry_list");
+    expect(names).toContain("mindvault_registry_count");
     expect(names).toContain("mindvault_setup_wallet");
     expect(names.length).toBeGreaterThanOrEqual(15);
 
@@ -172,6 +173,29 @@ describe("MCP integration harness", () => {
     expect(harnessIsToolError(empty)).toBe(false);
     expect(harnessResultText(empty)).toContain('"count": 0');
     expect(harnessResultText(empty)).toMatch(/No on-chain resources in range/);
+  });
+
+  it("calls mindvault_registry_count and returns global counts", async () => {
+    const result = await harness.callTool("mindvault_registry_count", {});
+    expect(harnessIsToolError(result)).toBe(false);
+    const text = harnessResultText(result);
+    const data = JSON.parse(text);
+    expect(data.source).toBe("on-chain (mock)");
+    // MOCK_REGISTRY_RESOURCES has 2 entries, both listed
+    expect(data.count).toBe(2);
+    expect(data.listedCount).toBe(2);
+    expect(data.creatorCount).toBeUndefined();
+    expect(data.creator).toBeUndefined();
+  });
+
+  it("calls mindvault_registry_count with a creator and returns creatorCount", async () => {
+    const result = await harness.callTool("mindvault_registry_count", {
+      creator: "GMOCKCREATOR1",
+    });
+    expect(harnessIsToolError(result)).toBe(false);
+    const data = JSON.parse(harnessResultText(result));
+    expect(data.creator).toBe("GMOCKCREATOR1");
+    expect(typeof data.creatorCount).toBe("number");
   });
 
   it("calls mindvault_recover_catalog_cache and returns guidance", async () => {
