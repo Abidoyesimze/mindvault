@@ -253,7 +253,7 @@ const USER_AGENT = resolveUserAgent(process.env);
 
 const logRetry = process.env.VITEST
   ? undefined
-  : (info: RetryAttemptInfo) => console.error(`MindVault MCP: ${formatRetryLog(info)}`);
+  : (info: RetryAttemptInfo) => logger.info(`MindVault MCP: ${formatRetryLog(info)}`);
 
 function httpRetryOptions(label: string) {
   return {
@@ -1868,7 +1868,7 @@ export async function buy(
       network: NETWORK,
     });
   } catch (err) {
-    console.error("MindVault MCP: failed to persist purchase receipt:", safeErrorMessage(err));
+    logger.error("MindVault MCP: failed to persist purchase receipt:", safeErrorMessage(err));
   }
 
   const summary = {
@@ -3265,7 +3265,7 @@ if (!process.env.VITEST && !MOCK) {
     network: STELLAR_NETWORK,
   })
     .then((result: { status: string; message: string }) => {
-      if (result.status === "mismatch") console.error(`MindVault MCP: ${result.message}`);
+      if (result.status === "mismatch") logger.warn(`MindVault MCP: ${result.message}`);
     })
     .catch(() => {});
 }
