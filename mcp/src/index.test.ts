@@ -65,6 +65,7 @@ import {
   setPrice,
   transferOwnership,
   setListed,
+  normalizeMetadataPointer,
   _setAgentWallet,
   _setAgentApiKey,
   _resetProfiles,
@@ -1837,21 +1838,85 @@ describe("updateMetadata", () => {
     }
   });
 
-  it("dispatches through dispatchTool with valid arguments", async () => {
+  it("normalizes the metadata pointer (strips trailing slash) in mock mode", async () => {
     _setAgentWallet({
       publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
       secretKey: "SD1234567890123456789012345678901234567890123456789012345",
     });
     process.env.MINDVAULT_MOCK = "1";
     try {
-      const res = await dispatchTool("mindvault_update_metadata", {
-        resourceId: "res-001",
-        metadata: "ipfs://Qm123",
-      });
-      expect(res).toContain("success");
+      const res = await updateMetadata("res-001", "https://example.com/meta.json/");
+      const parsed = JSON.parse(res);
+      // Trailing slash must be stripped before the on-chain call.
+      expect(parsed.metadata).toBe("https://example.com/meta.json");
     } finally {
       delete process.env.MINDVAULT_MOCK;
     }
+  });
+});
+
+// ── normalizeMetadataPointer (#842) ────────────────────────────────────────
+
+describe("normalizeMetadataPointer", () => {
+  it("strips a trailing slash from an HTTP URL path", () => {
+    expect(normalizeMetadataPointer("https://example.com/path/")).toBe("https://example.com/path");
+  });
+
+  it("strips multiple trailing slashes", () => {
+    expect(normalizeMetadataPointer("https://example.com/path///")).toBe(
+      "https://example.com/path",
+    );
+  });
+
+  it("preserves the root path slash", () => {
+    expect(normalizeMetadataPointer("https://example.com/")).toBe("https://example.com/");
+  });
+
+  it("lowercases scheme and host", () => {
+    expect(normalizeMetadataPointer("HTTPS://Example.COM/path")).toBe("https://example.com/path");
+  });
+
+  it("sorts query parameters alphabetically", () => {
+    expect(normalizeMetadataPointer("https://example.com/meta?z=1&a=2")).toBe(
+      "https://example.com/meta?a=2&z=1",
+    );
+  });
+
+  it("passes ipfs:// pointers through unchanged", () => {
+    const ipfs = "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
+    expect(normalizeMetadataPointer(ipfs)).toBe(ipfs);
+  });
+
+  it("passes ar:// pointers through unchanged", () => {
+    const ar = "ar://abc123";
+    expect(normalizeMetadataPointer(ar)).toBe(ar);
+  });
+
+  it("passes sha256: pointers through unchanged", () => {
+    const sha = "sha256:abc123def456";
+    expect(normalizeMetadataPointer(sha)).toBe(sha);
+  });
+
+  it("passes 0x pointers through unchanged", () => {
+    const hex = "0xdeadbeef";
+    expect(normalizeMetadataPointer(hex)).toBe(hex);
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(normalizeMetadataPointer("  https://example.com/path/  ")).toBe(
+      "https://example.com/path",
+    );
+  });
+
+  it("returns malformed URLs unchanged (no throw)", () => {
+    const bad = "https://not a valid url";
+    // URL constructor throws; we return the trimmed input
+    expect(() => normalizeMetadataPointer(bad)).not.toThrow();
+  });
+
+  it("a URL without a trailing slash is unchanged", () => {
+    const clean = "https://example.com/metadata.json";
+    expect(normalizeMetadataPointer(clean)).toBe(clean);
   });
 });
 
