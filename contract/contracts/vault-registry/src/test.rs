@@ -169,7 +169,7 @@ fn duplicate_registration_fails() {
 #[test]
 fn register_batch_succeeds_for_valid_items() {
     let (env, creator, client) = setup();
-    
+
     let mut items = Vec::new(&env);
     for i in 0..5 {
         items.push_back(BatchRegisterItem {
@@ -180,12 +180,12 @@ fn register_batch_succeeds_for_valid_items() {
             content_hash: None,
         });
     }
-    
+
     let result = client.register_batch(&creator, &items);
     assert_eq!(result.succeeded.len(), 5);
     assert_eq!(result.failed.len(), 0);
     assert_eq!(client.count(), 5);
-    
+
     // Verify all resources were registered
     for i in 0..5 {
         let id = String::from_str(&env, &format!("batch{}", i));
@@ -196,11 +196,17 @@ fn register_batch_succeeds_for_valid_items() {
 #[test]
 fn register_batch_handles_partial_failures() {
     let (env, creator, client) = setup();
-    
+
     // Pre-register one resource to cause a duplicate
     let dup_id = String::from_str(&env, "batch1");
-    client.register(&creator, &dup_id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
-    
+    client.register(
+        &creator,
+        &dup_id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
+
     let mut items = Vec::new(&env);
     items.push_back(BatchRegisterItem {
         id: String::from_str(&env, "batch0"),
@@ -230,21 +236,27 @@ fn register_batch_handles_partial_failures() {
         tags: empty_tags(&env),
         content_hash: None,
     });
-    
+
     let result = client.register_batch(&creator, &items);
-    
+
     // batch0 and batch3 should succeed
     assert_eq!(result.succeeded.len(), 2);
-    assert_eq!(result.succeeded.get(0).unwrap(), String::from_str(&env, "batch0"));
-    assert_eq!(result.succeeded.get(1).unwrap(), String::from_str(&env, "batch3"));
-    
+    assert_eq!(
+        result.succeeded.get(0).unwrap(),
+        String::from_str(&env, "batch0")
+    );
+    assert_eq!(
+        result.succeeded.get(1).unwrap(),
+        String::from_str(&env, "batch3")
+    );
+
     // batch1 (index 1) and batch2 (index 2) should fail
     assert_eq!(result.failed.len(), 2);
-    
+
     let (idx1, err1) = result.failed.get(0).unwrap();
     assert_eq!(idx1, 1);
     assert_eq!(err1, Error::AlreadyRegistered as u32);
-    
+
     let (idx2, err2) = result.failed.get(1).unwrap();
     assert_eq!(idx2, 2);
     assert_eq!(err2, Error::InvalidPrice as u32);
@@ -253,7 +265,7 @@ fn register_batch_handles_partial_failures() {
 #[test]
 fn register_batch_rejects_oversized_batch() {
     let (env, creator, client) = setup();
-    
+
     let mut items = Vec::new(&env);
     for i in 0..15 {
         items.push_back(BatchRegisterItem {
@@ -264,7 +276,7 @@ fn register_batch_rejects_oversized_batch() {
             content_hash: None,
         });
     }
-    
+
     let res = client.try_register_batch(&creator, &items);
     assert_eq!(res, Err(Ok(Error::BatchTooLarge)));
 }
@@ -272,7 +284,7 @@ fn register_batch_rejects_oversized_batch() {
 #[test]
 fn register_batch_requires_creator_auth() {
     let (env, creator, client) = setup();
-    
+
     let mut items = Vec::new(&env);
     items.push_back(BatchRegisterItem {
         id: String::from_str(&env, "batch0"),
@@ -281,7 +293,7 @@ fn register_batch_requires_creator_auth() {
         tags: empty_tags(&env),
         content_hash: None,
     });
-    
+
     env.mock_auths(&[]);
     let res = client.try_register_batch(&creator, &items);
     assert!(res.is_err());
@@ -290,7 +302,7 @@ fn register_batch_requires_creator_auth() {
 #[test]
 fn register_batch_respects_pause_state() {
     let (env, creator, admin, client) = setup_with_admin();
-    
+
     let mut items = Vec::new(&env);
     items.push_back(BatchRegisterItem {
         id: String::from_str(&env, "batch0"),
@@ -299,9 +311,9 @@ fn register_batch_respects_pause_state() {
         tags: empty_tags(&env),
         content_hash: None,
     });
-    
+
     client.set_paused(&admin, &true);
-    
+
     let res = client.try_register_batch(&creator, &items);
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
 }
@@ -309,10 +321,10 @@ fn register_batch_respects_pause_state() {
 #[test]
 fn register_batch_handles_empty_batch() {
     let (env, creator, client) = setup();
-    
+
     let items = Vec::new(&env);
     let result = client.register_batch(&creator, &items);
-    
+
     assert_eq!(result.succeeded.len(), 0);
     assert_eq!(result.failed.len(), 0);
 }
@@ -320,7 +332,7 @@ fn register_batch_handles_empty_batch() {
 #[test]
 fn register_batch_with_content_hashes() {
     let (env, creator, client) = setup();
-    
+
     let mut items = Vec::new(&env);
     items.push_back(BatchRegisterItem {
         id: String::from_str(&env, "batch0"),
@@ -336,15 +348,18 @@ fn register_batch_with_content_hashes() {
         tags: empty_tags(&env),
         content_hash: None,
     });
-    
+
     let result = client.register_batch(&creator, &items);
     assert_eq!(result.succeeded.len(), 2);
     assert_eq!(result.failed.len(), 0);
-    
+
     // Verify content hash was set
     let r0 = client.get(&String::from_str(&env, "batch0"));
-    assert_eq!(r0.content_hash, Some(String::from_str(&env, "sha256:abcd1234")));
-    
+    assert_eq!(
+        r0.content_hash,
+        Some(String::from_str(&env, "sha256:abcd1234"))
+    );
+
     let r1 = client.get(&String::from_str(&env, "batch1"));
     assert_eq!(r1.content_hash, None);
 }
@@ -461,13 +476,13 @@ fn reserved_resource_ids_are_rejected() {
 
     // Each tuple is (lowercase form, at-least-one-uppercase variant).
     let cases: &[(&str, &str)] = &[
-        ("admin",    "Admin"),
-        ("null",     "NULL"),
+        ("admin", "Admin"),
+        ("null", "NULL"),
         ("registry", "Registry"),
-        ("api",      "API"),
-        ("index",    "Index"),
-        ("root",     "Root"),
-        ("system",   "System"),
+        ("api", "API"),
+        ("index", "Index"),
+        ("root", "Root"),
+        ("system", "System"),
     ];
 
     for (lower, upper) in cases {
@@ -1124,6 +1139,56 @@ fn get_owner_after_transfer() {
     client.transfer_ownership(&id, &new_owner);
 
     assert_eq!(client.get_owner(&id), new_owner);
+}
+
+#[test]
+fn get_owner_many_preserves_order_and_missing_slots() {
+    let (env, creator, client) = setup();
+    let id_a = String::from_str(&env, "ownermanya");
+    let id_b = String::from_str(&env, "ownermanyb");
+    let missing = String::from_str(&env, "ownermanyz");
+    let new_owner = Address::generate(&env);
+
+    client.register(
+        &creator,
+        &id_a,
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
+    client.register(
+        &creator,
+        &id_b,
+        &200i128,
+        &String::from_str(&env, "ipfs://b"),
+        &empty_tags(&env),
+    );
+    client.transfer_ownership(&id_b, &new_owner);
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(id_a);
+    ids.push_back(missing);
+    ids.push_back(id_b);
+
+    let owners = client.get_owner_many(&ids);
+    assert_eq!(owners.len(), 3);
+    assert_eq!(owners.get(0).unwrap(), Some(creator));
+    assert_eq!(owners.get(1).unwrap(), None);
+    assert_eq!(owners.get(2).unwrap(), Some(new_owner));
+}
+
+#[test]
+fn get_owner_many_rejects_batches_over_twenty() {
+    let (env, _creator, client) = setup();
+    let mut ids = Vec::new(&env);
+    for i in 0..21 {
+        ids.push_back(String::from_str(&env, &format!("owner{i}")));
+    }
+
+    assert_eq!(
+        client.try_get_owner_many(&ids),
+        Err(Ok(Error::BatchTooLarge))
+    );
 }
 
 #[test]
@@ -1792,15 +1857,15 @@ fn set_royalty_recipient_overrides_for_resource() {
     let id = String::from_str(&env, "royal1");
     let metadata = String::from_str(&env, "m");
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
-    
+
     // Initially None
     let resource = client.get(&id);
     assert_eq!(resource.royalty_recipient, None);
-    
+
     // Set royalty recipient
     let recipient = Address::generate(&env);
     client.set_royalty_recipient(&id, &Some(recipient.clone()));
-    
+
     // Verify it's set
     let resource = client.get(&id);
     assert_eq!(resource.royalty_recipient, Some(recipient));
@@ -1812,12 +1877,12 @@ fn set_royalty_recipient_can_clear_override() {
     let id = String::from_str(&env, "royal2");
     let metadata = String::from_str(&env, "m");
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
-    
+
     // Set a recipient
     let recipient = Address::generate(&env);
     client.set_royalty_recipient(&id, &Some(recipient.clone()));
     assert_eq!(client.get(&id).royalty_recipient, Some(recipient));
-    
+
     // Clear it
     client.set_royalty_recipient(&id, &None);
     assert_eq!(client.get(&id).royalty_recipient, None);
@@ -1829,7 +1894,7 @@ fn set_royalty_recipient_requires_creator_auth() {
     let id = String::from_str(&env, "royal3");
     let metadata = String::from_str(&env, "m");
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
-    
+
     // Without auth, should fail
     env.mock_auths(&[]);
     let recipient = Address::generate(&env);
@@ -1842,7 +1907,7 @@ fn set_royalty_recipient_fails_for_nonexistent_resource() {
     let (env, _creator, client) = setup();
     let id = String::from_str(&env, "noexist");
     let recipient = Address::generate(&env);
-    
+
     let res = client.try_set_royalty_recipient(&id, &Some(recipient));
     assert_eq!(res, Err(Ok(Error::NotFound)));
 }
@@ -1853,19 +1918,23 @@ fn set_royalty_recipient_emits_event() {
     let id = String::from_str(&env, "royal4");
     let metadata = String::from_str(&env, "m");
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
-    
+
     // Set recipient
     let recipient = Address::generate(&env);
     client.set_royalty_recipient(&id, &Some(recipient.clone()));
-    
+
     // Check event
     let events = env.events().all();
     let last_event = events.last().unwrap();
-    let (_contract, topics, data): (Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val) = last_event;
-    
+    let (_contract, topics, data): (
+        Address,
+        soroban_sdk::Vec<soroban_sdk::Val>,
+        soroban_sdk::Val,
+    ) = last_event;
+
     let topic_symbol: soroban_sdk::Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
     assert_eq!(topic_symbol, symbol_short!("setroyal"));
-    
+
     // Data should be (old, new)
     let (old, new): (Option<Address>, Option<Address>) = data.try_into_val(&env).unwrap();
     assert_eq!(old, None);
@@ -1878,10 +1947,10 @@ fn set_royalty_recipient_fails_when_paused() {
     let id = String::from_str(&env, "royal5");
     let metadata = String::from_str(&env, "m");
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
-    
+
     // Pause contract
     client.set_paused(&admin, &true);
-    
+
     // Try to set recipient while paused
     let recipient = Address::generate(&env);
     let res = client.try_set_royalty_recipient(&id, &Some(recipient));
@@ -1894,10 +1963,10 @@ fn set_royalty_recipient_fails_for_frozen_resource() {
     let id = String::from_str(&env, "royal6");
     let metadata = String::from_str(&env, "m");
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
-    
+
     // Freeze resource
     client.freeze_resource(&id);
-    
+
     // Try to set recipient on frozen resource
     let recipient = Address::generate(&env);
     let res = client.try_set_royalty_recipient(&id, &Some(recipient));
@@ -1922,7 +1991,10 @@ fn sha256_pointer_rejects_short_hash() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "shortsha");
     // 63 hex chars — one short of the required 64
-    let metadata = String::from_str(&env, "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef012345678");
+    let metadata = String::from_str(
+        &env,
+        "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef012345678",
+    );
 
     assert_eq!(
         client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
@@ -1936,7 +2008,10 @@ fn sha256_pointer_rejects_long_hash() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "longsha");
     // 65 hex chars — one more than the required 64
-    let metadata = String::from_str(&env, "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab");
+    let metadata = String::from_str(
+        &env,
+        "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab",
+    );
 
     assert_eq!(
         client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
@@ -1950,7 +2025,10 @@ fn sha256_pointer_rejects_non_hex_chars() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "nonhexsha");
     // 64 chars but contains 'g' (not a hex digit)
-    let metadata = String::from_str(&env, "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789g");
+    let metadata = String::from_str(
+        &env,
+        "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789g",
+    );
 
     assert_eq!(
         client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
@@ -1963,7 +2041,10 @@ fn sha256_pointer_rejects_non_hex_chars() {
 fn sha256_pointer_accepts_valid_64_hex_hash() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "goodsha");
-    let metadata = String::from_str(&env, "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
+    let metadata = String::from_str(
+        &env,
+        "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    );
 
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
     let r = client.get(&id);
@@ -1975,7 +2056,10 @@ fn sha256_dash_prefix_pointer_rejects_short_hash() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "dashshort");
     // sha-256: with only 63 hex chars
-    let metadata = String::from_str(&env, "sha-256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef012345678");
+    let metadata = String::from_str(
+        &env,
+        "sha-256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef012345678",
+    );
 
     assert_eq!(
         client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
@@ -1988,7 +2072,10 @@ fn sha256_dash_prefix_pointer_rejects_short_hash() {
 fn sha256_dash_prefix_pointer_accepts_valid_64_hex_hash() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "dashgood");
-    let metadata = String::from_str(&env, "sha-256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
+    let metadata = String::from_str(
+        &env,
+        "sha-256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    );
 
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
     let r = client.get(&id);
@@ -2000,7 +2087,10 @@ fn sha256_pointer_rejected_with_uppercase_hex() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "uppercasesha");
     // 64 chars, valid hex, but uppercase — the contract should still accept it
-    let metadata = String::from_str(&env, "sha256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789");
+    let metadata = String::from_str(
+        &env,
+        "sha256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+    );
 
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
     let r = client.get(&id);
@@ -4080,8 +4170,11 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
 
     // Verifier role, verification mirror, freeze, and index repair.
+    let old_verifier = Address::generate(&env);
     let verifier = Address::generate(&env);
-    client.add_verifier(&verifier); // -> "addverif"
+    client.add_verifier(&old_verifier); // -> "addverif"
+    record(&env, &client, &mut observed);
+    client.rotate_verifier(&old_verifier, &verifier); // -> "rmverif", "addverif", "verrot"
     record(&env, &client, &mut observed);
     client.set_verification_status(&r2, &verifier, &VerificationStatus::Verified, &None); // -> "verify"
     record(&env, &client, &mut observed);
@@ -4090,6 +4183,11 @@ fn full_workflow_emits_exactly_the_documented_events() {
         royalty_bps: 100,
         fee_recipient: Some(admin2.clone()),
     }); // -> "setfee"
+    record(&env, &client, &mut observed);
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: 250,
+        destination: FeeDestination::Burn,
+    });
     record(&env, &client, &mut observed);
 
     let buyer = Address::generate(&env);
@@ -4215,10 +4313,7 @@ fn fee_amount_calculation_truncates_fractional_stroops() {
 #[test]
 fn fee_amount_calculation_handles_maximum_rate_and_large_amount() {
     assert_eq!(fee_amount(1_000_000, MAX_FEE_BPS), 500_000);
-    assert_eq!(
-        fee_amount(MAX_PRICE, MAX_FEE_BPS),
-        500_000_000_000_000_000
-    );
+    assert_eq!(fee_amount(MAX_PRICE, MAX_FEE_BPS), 500_000_000_000_000_000);
 }
 
 #[test]
@@ -4283,7 +4378,7 @@ fn fee_config_rejects_combined_rates_above_maximum() {
 #[test]
 fn set_fee_recipient_updates_only_recipient() {
     let (env, _creator, admin, client) = setup_with_admin();
-    
+
     // Set initial fee config with rates and recipient
     let initial_recipient = Address::generate(&env);
     client.set_fee_config(&FeeConfig {
@@ -4291,11 +4386,11 @@ fn set_fee_recipient_updates_only_recipient() {
         royalty_bps: 200,
         fee_recipient: Some(initial_recipient.clone()),
     });
-    
+
     // Update only the recipient
     let new_recipient = Address::generate(&env);
     client.set_fee_recipient(&Some(new_recipient.clone()));
-    
+
     // Verify recipient changed but rates stayed the same
     let config = client.get_fee_config().unwrap();
     assert_eq!(config.platform_fee_bps, 100);
@@ -4306,7 +4401,7 @@ fn set_fee_recipient_updates_only_recipient() {
 #[test]
 fn set_fee_recipient_can_clear_recipient() {
     let (env, _creator, _admin, client) = setup_with_admin();
-    
+
     // Set initial config with recipient
     let recipient = Address::generate(&env);
     client.set_fee_config(&FeeConfig {
@@ -4314,10 +4409,10 @@ fn set_fee_recipient_can_clear_recipient() {
         royalty_bps: 50,
         fee_recipient: Some(recipient),
     });
-    
+
     // Clear the recipient
     client.set_fee_recipient(&None);
-    
+
     // Verify recipient is None but rates preserved
     let config = client.get_fee_config().unwrap();
     assert_eq!(config.platform_fee_bps, 100);
@@ -4328,17 +4423,17 @@ fn set_fee_recipient_can_clear_recipient() {
 #[test]
 fn set_fee_recipient_can_set_recipient_when_none() {
     let (_env, _creator, admin, client) = setup_with_admin();
-    
+
     // Set initial config without recipient
     client.set_fee_config(&FeeConfig {
         platform_fee_bps: 150,
         royalty_bps: 100,
         fee_recipient: None,
     });
-    
+
     // Add a recipient
     client.set_fee_recipient(&Some(admin.clone()));
-    
+
     // Verify recipient added
     let config = client.get_fee_config().unwrap();
     assert_eq!(config.fee_recipient, Some(admin));
@@ -4347,7 +4442,7 @@ fn set_fee_recipient_can_set_recipient_when_none() {
 #[test]
 fn set_fee_recipient_fails_before_fee_config_set() {
     let (_env, _creator, admin, client) = setup_with_admin();
-    
+
     // Try to set recipient before any fee config exists
     let res = client.try_set_fee_recipient(&Some(admin));
     assert_eq!(res, Err(Ok(Error::FeeConfigNotSet)));
@@ -4356,14 +4451,14 @@ fn set_fee_recipient_fails_before_fee_config_set() {
 #[test]
 fn set_fee_recipient_requires_admin_auth() {
     let (env, _creator, _admin, client) = setup_with_admin();
-    
+
     // Set initial fee config
     client.set_fee_config(&FeeConfig {
         platform_fee_bps: 100,
         royalty_bps: 100,
         fee_recipient: None,
     });
-    
+
     // Without admin auth, the call should fail
     env.mock_auths(&[]);
     let new_recipient = Address::generate(&env);
@@ -4374,7 +4469,7 @@ fn set_fee_recipient_requires_admin_auth() {
 #[test]
 fn set_fee_recipient_emits_setfee_event() {
     let (env, _creator, admin, client) = setup_with_admin();
-    
+
     // Set initial config
     let initial_recipient = Address::generate(&env);
     client.set_fee_config(&FeeConfig {
@@ -4382,23 +4477,27 @@ fn set_fee_recipient_emits_setfee_event() {
         royalty_bps: 200,
         fee_recipient: Some(initial_recipient.clone()),
     });
-    
+
     // Update recipient
     let new_recipient = Address::generate(&env);
     client.set_fee_recipient(&Some(new_recipient.clone()));
-    
+
     // Verify setfee event was emitted
     let events = env.events().all();
     let last_event = events.last().unwrap();
-    let (_contract, topics, data): (Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val) = last_event;
-    
+    let (_contract, topics, data): (
+        Address,
+        soroban_sdk::Vec<soroban_sdk::Val>,
+        soroban_sdk::Val,
+    ) = last_event;
+
     // Event should have "setfee" topic
     let topic_symbol: soroban_sdk::Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
     assert_eq!(topic_symbol, symbol_short!("setfee"));
-    
+
     // Data should contain old and new config
     let event_data: FeeConfigUpdated = data.try_into_val(&env).unwrap();
-    
+
     // Old config should have initial recipient
     match event_data.old_config {
         OptFeeConfig::Some(old) => {
@@ -4408,7 +4507,7 @@ fn set_fee_recipient_emits_setfee_event() {
         }
         OptFeeConfig::None => panic!("Expected old config to be Some"),
     }
-    
+
     // New config should have new recipient
     assert_eq!(event_data.new_config.fee_recipient, Some(new_recipient));
     assert_eq!(event_data.new_config.platform_fee_bps, 100);
@@ -4416,19 +4515,246 @@ fn set_fee_recipient_emits_setfee_event() {
 }
 
 #[test]
+fn fee_destination_defaults_to_disabled() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+}
+
+#[test]
+fn set_fee_destination_supports_burn_charity_and_clear() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin),
+    });
+
+    let burn = FeeDestinationConfig {
+        bps: 2_500,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&burn);
+    assert_eq!(client.get_fee_destination(), burn);
+
+    let charity = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Charity(Address::generate(&env)),
+    };
+    client.set_fee_destination(&charity);
+    assert_eq!(client.get_fee_destination(), charity);
+
+    let disabled = FeeDestinationConfig {
+        bps: 0,
+        destination: FeeDestination::None,
+    };
+    client.set_fee_destination(&disabled);
+    assert_eq!(client.get_fee_destination(), disabled);
+}
+
+#[test]
+fn set_fee_destination_emits_audit_event() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin),
+    });
+
+    env.ledger().set_sequence_number(321);
+    let new_destination = FeeDestinationConfig {
+        bps: 2_500,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&new_destination);
+
+    let events = env.events().all();
+    assert_eq!(events.len(), 1);
+    let (contract, topics, data) = events.get(0).unwrap();
+    assert_eq!(contract, client.address);
+    assert_eq!(topics.len(), 1);
+    let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+    assert_eq!(topic, symbol_short!("setdest"));
+    let event: FeeDestinationUpdated = data.try_into_val(&env).unwrap();
+    assert_eq!(
+        event.old_destination,
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+    assert_eq!(event.new_destination, new_destination);
+    assert_eq!(event.ledger, 321);
+}
+
+#[test]
+fn set_fee_destination_validates_bounds_and_combined_policy() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 0,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: MAX_FEE_DESTINATION_BPS + 1,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::FeeBpsTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::Charity(Address::generate(&env)),
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 2_500,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 2_500,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+}
+
+#[test]
+fn set_fee_destination_requires_fee_config() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: MAX_FEE_DESTINATION_BPS,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::FeeConfigNotSet))
+    );
+}
+
+#[test]
+fn set_fee_destination_requires_admin_auth() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(Address::generate(&env)),
+    });
+    env.mock_auths(&[]);
+    let result = client.try_set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+    assert!(result.is_err());
+}
+
+#[test]
+fn set_fee_destination_fails_when_paused() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    client.set_paused(&admin, &true);
+    let result = client.try_set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+    assert_eq!(result, Err(Ok(Error::ContractPaused)));
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+}
+
+#[test]
+fn fee_destination_is_preserved_and_partial_routes_require_recipient() {
+    let (_env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    let destination = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&destination);
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 2_000,
+        royalty_bps: 500,
+        fee_recipient: Some(admin.clone()),
+    });
+    assert_eq!(client.get_fee_destination(), destination);
+
+    assert_eq!(
+        client.try_set_fee_recipient(&None),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    let full_destination = FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&full_destination);
+    client.set_fee_recipient(&None);
+    assert_eq!(client.get_fee_destination(), full_destination);
+    assert_eq!(client.get_fee_config().unwrap().fee_recipient, None);
+}
+
+#[test]
 fn set_fee_recipient_fails_when_paused() {
     let (env, _creator, admin, client) = setup_with_admin();
-    
+
     // Set initial fee config
     client.set_fee_config(&FeeConfig {
         platform_fee_bps: 100,
         royalty_bps: 100,
         fee_recipient: None,
     });
-    
+
     // Pause the contract
     client.set_paused(&admin, &true);
-    
+
     // Try to set recipient while paused
     let res = client.try_set_fee_recipient(&Some(admin));
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
@@ -4527,14 +4853,14 @@ fn remove_verifier_before_admin_set_fails() {
 fn remove_verifier_idempotent() {
     let (env, _creator, _admin, client) = setup_with_admin();
     let verifier = Address::generate(&env);
-    
+
     // Add and remove verifier
     client.add_verifier(&verifier);
     assert!(client.is_verifier(&verifier));
-    
+
     client.remove_verifier(&verifier);
     assert!(!client.is_verifier(&verifier));
-    
+
     // Removing again should not error (idempotent)
     client.remove_verifier(&verifier);
     assert!(!client.is_verifier(&verifier));
@@ -4544,16 +4870,16 @@ fn remove_verifier_idempotent() {
 fn remove_verifier_requires_admin_auth() {
     let (env, _creator, admin, client) = setup_with_admin();
     let verifier = Address::generate(&env);
-    
+
     // Admin adds a verifier
     client.add_verifier(&verifier);
     assert!(client.is_verifier(&verifier));
-    
+
     // Without mocking auth, the call will fail auth check
     env.mock_auths(&[]);
     let res = client.try_remove_verifier(&verifier);
     assert!(res.is_err());
-    
+
     // With admin auth, it succeeds
     env.mock_all_auths();
     client.remove_verifier(&verifier);
@@ -4565,23 +4891,118 @@ fn remove_verifier_revokes_verification_ability() {
     let (env, creator, _admin, client) = setup_with_admin();
     let id = register_default(&env, &creator, &client, "revoke-test");
     let verifier = Address::generate(&env);
-    
+
     // Add verifier and verify they can set verification status
     client.add_verifier(&verifier);
     client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
     let resource = client.get(&id);
     assert_eq!(resource.verified, VerificationStatus::Verified);
-    
+
     // Remove verifier
     client.remove_verifier(&verifier);
     assert!(!client.is_verifier(&verifier));
-    
+
     // Register another resource
     let id2 = register_default(&env, &creator, &client, "revoke-test-2");
-    
+
     // Removed verifier cannot set verification status
-    let res = client.try_set_verification_status(&id2, &verifier, &VerificationStatus::Verified, &None);
+    let res =
+        client.try_set_verification_status(&id2, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::NotVerifier)));
+}
+
+#[test]
+fn admin_can_rotate_verifier_with_audit_event() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+
+    client.add_verifier(&old_verifier);
+    let ledger = env.ledger().sequence();
+    client.rotate_verifier(&old_verifier, &new_verifier);
+
+    let events = env.events().all();
+    assert!(!client.is_verifier(&old_verifier));
+    assert!(client.is_verifier(&new_verifier));
+
+    let mut found = false;
+    for i in 0..events.len() {
+        let (contract, topics, data) = events.get(i).unwrap();
+        if contract != client.address {
+            continue;
+        }
+        let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        if topic != symbol_short!("verrot") {
+            continue;
+        }
+        assert_eq!(topics.len(), 2);
+        let topic_old_verifier: Address = topics.get(1).unwrap().try_into_val(&env).unwrap();
+        let payload: VerifierRotation = data.try_into_val(&env).unwrap();
+        assert_eq!(topic_old_verifier, old_verifier);
+        assert_eq!(
+            payload,
+            VerifierRotation {
+                old_verifier: old_verifier.clone(),
+                new_verifier: new_verifier.clone(),
+                ledger,
+            }
+        );
+        found = true;
+    }
+    assert!(found, "rotate_verifier must emit a verrot event");
+}
+
+#[test]
+fn rotate_verifier_requires_admin_auth() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+    client.add_verifier(&old_verifier);
+
+    env.mock_auths(&[]);
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert!(result.is_err());
+
+    env.mock_all_auths();
+    assert!(client.is_verifier(&old_verifier));
+    assert!(!client.is_verifier(&new_verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_unregistered_old_verifier() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert_eq!(result, Err(Ok(Error::NotFound)));
+    assert!(!client.is_verifier(&old_verifier));
+    assert!(!client.is_verifier(&new_verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_same_key_without_state_change() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+
+    let result = client.try_rotate_verifier(&verifier, &verifier);
+    assert_eq!(result, Err(Ok(Error::AlreadyRegistered)));
+    assert!(client.is_verifier(&verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_registered_new_key_without_state_change() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+    client.add_verifier(&old_verifier);
+    client.add_verifier(&new_verifier);
+
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert_eq!(result, Err(Ok(Error::AlreadyRegistered)));
+    assert!(client.is_verifier(&old_verifier));
+    assert!(client.is_verifier(&new_verifier));
 }
 
 // ─── On-chain verification status mirror (#436) ────────────────────────────
@@ -4938,7 +5359,8 @@ fn non_verifier_cannot_set_verification_status() {
     let id = register_default(&env, &creator, &client, "vres3");
     let stranger = Address::generate(&env);
 
-    let res = client.try_set_verification_status(&id, &stranger, &VerificationStatus::Verified, &None);
+    let res =
+        client.try_set_verification_status(&id, &stranger, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::NotVerifier)));
     assert_eq!(client.get(&id).verified, VerificationStatus::Pending);
 }
@@ -4951,7 +5373,8 @@ fn revoked_verifier_cannot_set_verification_status() {
     client.add_verifier(&verifier);
     client.remove_verifier(&verifier);
 
-    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+    let res =
+        client.try_set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::NotVerifier)));
 }
 
@@ -4963,7 +5386,8 @@ fn verification_self_transition_rejected() {
     client.add_verifier(&verifier);
 
     // Pending -> Pending is a no-op and rejected as invalid.
-    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending, &None);
+    let res =
+        client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending, &None);
     assert_eq!(res, Err(Ok(Error::InvalidVerificationTransition)));
 }
 
@@ -4975,7 +5399,8 @@ fn verification_cannot_revert_to_pending() {
     client.add_verifier(&verifier);
 
     client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
-    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending, &None);
+    let res =
+        client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending, &None);
     assert_eq!(res, Err(Ok(Error::InvalidVerificationTransition)));
 }
 
@@ -5023,19 +5448,35 @@ fn verification_status_can_store_and_retrieve_attestation_hash() {
         &VerificationStatus::Verified,
         &Some(hash_val.clone()),
     );
-    
+
     assert_eq!(client.get(&id).verified, VerificationStatus::Verified);
     let retrieved_hash = client.get_attestation_hash(&id);
-    assert_eq!(retrieved_hash, Some(hash_val));
+    assert_eq!(
+        retrieved_hash,
+        Some(String::from_str(&env, "sha256:a1b2c3d4e5f6g7h8i9j0"))
+    );
 
     // Clearing it
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Rejected, &None);
+    assert_eq!(client.get_attestation_hash(&id), None);
+}
+
+#[test]
+fn verification_status_preserves_explicit_attestation_hash_algorithm() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "vres9");
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+    let hash_val = String::from_str(&env, "poseidon:abc123");
+
     client.set_verification_status(
         &id,
         &verifier,
-        &VerificationStatus::Rejected,
-        &None,
+        &VerificationStatus::Verified,
+        &Some(hash_val.clone()),
     );
-    assert_eq!(client.get_attestation_hash(&id), None);
+
+    assert_eq!(client.get_attestation_hash(&id), Some(hash_val));
 }
 
 // ─── Metadata freeze (#438) ────────────────────────────────────────────────
@@ -6649,6 +7090,123 @@ fn settle_payment_emits_settle_event() {
     assert_eq!(decoded.state, PaymentState::Settled);
 }
 
+#[test]
+fn record_payment_settle_payment_anchor_end_to_end() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let resource_id = String::from_str(&env, "x402e2e");
+    let receipt_id = String::from_str(&env, "x402-receipt-001");
+    let tx_hash = String::from_str(&env, "sha256:x402-transaction-001");
+    let receipt_hash = String::from_str(&env, "sha256:x402-anchor-001");
+    let amount = 100i128;
+
+    client.add_settler(&settler);
+    client.add_verifier(&verifier);
+    assert!(client.is_settler(&settler));
+    assert!(client.is_verifier(&verifier));
+
+    client.register(
+        &creator,
+        &resource_id,
+        &amount,
+        &String::from_str(&env, "ipfs://x402e2e"),
+        &empty_tags(&env),
+    );
+
+    env.ledger().set_sequence_number(700);
+    client.record_payment(
+        &settler,
+        &receipt_id,
+        &resource_id,
+        &payer,
+        &amount,
+        &tx_hash,
+    );
+    let expected_recorded = PaymentReceipt {
+        receipt_id: receipt_id.clone(),
+        resource_id: resource_id.clone(),
+        payer: payer.clone(),
+        amount,
+        state: PaymentState::Escrowed,
+        tx_hash: tx_hash.clone(),
+        recorded_at: 700,
+        ledger: 700,
+    };
+
+    let payment_events = env.events().all();
+    assert_eq!(payment_events.len(), 1);
+    let (payment_contract, payment_topics, payment_data) = payment_events.get(0).unwrap();
+    assert_eq!(payment_contract, client.address);
+    assert_eq!(payment_topics.len(), 2);
+    let payment_symbol: Symbol =
+        Symbol::try_from_val(&env, &payment_topics.get(0).unwrap()).unwrap();
+    assert_eq!(payment_symbol, symbol_short!("payment"));
+    let payment_topic_id: String =
+        String::try_from_val(&env, &payment_topics.get(1).unwrap()).unwrap();
+    assert_eq!(payment_topic_id, receipt_id);
+    let payment_event: PaymentReceipt = PaymentReceipt::try_from_val(&env, &payment_data).unwrap();
+    assert_eq!(payment_event, expected_recorded);
+    assert_eq!(client.get_payment(&receipt_id), expected_recorded);
+    assert_eq!(
+        client.get_payment_receipt(&resource_id, &payer),
+        expected_recorded
+    );
+
+    env.ledger().set_sequence_number(701);
+    client.settle_payment(&settler, &receipt_id);
+    let expected_settled = PaymentReceipt {
+        state: PaymentState::Settled,
+        ..expected_recorded.clone()
+    };
+
+    let settle_events = env.events().all();
+    assert_eq!(settle_events.len(), 1);
+    let (settle_contract, settle_topics, settle_data) = settle_events.get(0).unwrap();
+    assert_eq!(settle_contract, client.address);
+    assert_eq!(settle_topics.len(), 2);
+    let settle_symbol: Symbol = Symbol::try_from_val(&env, &settle_topics.get(0).unwrap()).unwrap();
+    assert_eq!(settle_symbol, symbol_short!("settle"));
+    let settle_topic_id: String =
+        String::try_from_val(&env, &settle_topics.get(1).unwrap()).unwrap();
+    assert_eq!(settle_topic_id, receipt_id);
+    let settle_event: PaymentReceipt = PaymentReceipt::try_from_val(&env, &settle_data).unwrap();
+    assert_eq!(settle_event, expected_settled);
+    assert_eq!(client.get_payment(&receipt_id), expected_settled);
+    assert_eq!(
+        client.get_payment_receipt(&resource_id, &payer),
+        expected_settled
+    );
+
+    env.ledger().set_sequence_number(702);
+    client.anchor_purchase_receipt(&verifier, &resource_id, &payer, &receipt_hash);
+    let expected_anchor = PurchaseReceiptAnchor {
+        resource_id: resource_id.clone(),
+        buyer: payer.clone(),
+        receipt_hash: receipt_hash.clone(),
+        ledger: 702,
+    };
+
+    let anchor_events = env.events().all();
+    assert_eq!(anchor_events.len(), 1);
+    let (anchor_contract, anchor_topics, anchor_data) = anchor_events.get(0).unwrap();
+    assert_eq!(anchor_contract, client.address);
+    assert_eq!(anchor_topics.len(), 2);
+    let anchor_symbol: Symbol = Symbol::try_from_val(&env, &anchor_topics.get(0).unwrap()).unwrap();
+    assert_eq!(anchor_symbol, symbol_short!("anchor"));
+    let anchor_topic_id: String =
+        String::try_from_val(&env, &anchor_topics.get(1).unwrap()).unwrap();
+    assert_eq!(anchor_topic_id, resource_id);
+    let anchor_event: PurchaseReceiptAnchor =
+        PurchaseReceiptAnchor::try_from_val(&env, &anchor_data).unwrap();
+    assert_eq!(anchor_event, expected_anchor);
+    assert_eq!(
+        client.get_purchase_receipt(&resource_id, &payer),
+        expected_anchor
+    );
+}
+
 /// Failed record_payment calls leave no receipt behind.
 #[test]
 fn failed_record_payment_does_not_store_receipt() {
@@ -7011,7 +7569,8 @@ fn pause_blocks_set_verification_status() {
     let verifier = Address::generate(&env);
     client.add_verifier(&verifier);
     client.set_paused(&admin, &true);
-    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+    let res =
+        client.try_set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
     assert_eq!(client.get(&id).verified, VerificationStatus::Pending);
 }
@@ -7743,16 +8302,34 @@ fn listed_count_starts_at_zero() {
 #[test]
 fn listed_count_increments_on_register() {
     let (env, creator, client) = setup();
-    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
     assert_eq!(client.listed_count(), 1);
-    client.register(&creator, &String::from_str(&env, "res2"), &200i128, &String::from_str(&env, "ipfs://b"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res2"),
+        &200i128,
+        &String::from_str(&env, "ipfs://b"),
+        &empty_tags(&env),
+    );
     assert_eq!(client.listed_count(), 2);
 }
 
 #[test]
 fn listed_count_decrements_on_set_listed_false() {
     let (env, creator, client) = setup();
-    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
     assert_eq!(client.listed_count(), 1);
     client.set_listed(&String::from_str(&env, "res1"), &false);
     assert_eq!(client.listed_count(), 0);
@@ -7761,7 +8338,13 @@ fn listed_count_decrements_on_set_listed_false() {
 #[test]
 fn listed_count_increments_when_relisted() {
     let (env, creator, client) = setup();
-    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
     assert_eq!(client.listed_count(), 1);
     client.set_listed(&String::from_str(&env, "res1"), &false);
     assert_eq!(client.listed_count(), 0);
@@ -7772,7 +8355,13 @@ fn listed_count_increments_when_relisted() {
 #[test]
 fn listed_count_noop_when_already_in_target_state() {
     let (env, creator, client) = setup();
-    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
     assert_eq!(client.listed_count(), 1);
     // set_listed(true) on an already-listed resource should not change count
     client.set_listed(&String::from_str(&env, "res1"), &true);
@@ -7822,7 +8411,11 @@ fn listed_count_increments_when_dispute_resolved_to_listed() {
     assert_eq!(client.listed_count(), 1);
     client.open_dispute(&String::from_str(&env, "res1"), &_admin);
     assert_eq!(client.listed_count(), 0);
-    client.resolve_dispute(&String::from_str(&env, "res1"), &_admin, &ResourceState::Listed);
+    client.resolve_dispute(
+        &String::from_str(&env, "res1"),
+        &_admin,
+        &ResourceState::Listed,
+    );
     assert_eq!(client.listed_count(), 1);
 }
 
@@ -8135,7 +8728,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 26] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -8154,11 +8747,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
         (DataKey::PendingTransfer(id.clone()), "PendingTransfer", 2),
         (DataKey::Verifier(who.clone()), "Verifier", 2),
         (DataKey::NetworkId, "NetworkId", 1),
-        (
-            DataKey::PaymentReceipt(id.clone()),
-            "PaymentReceipt",
-            2,
-        ),
+        (DataKey::PaymentReceipt(id.clone()), "PaymentReceipt", 2),
         (
             DataKey::PaymentIndex(id.clone(), who.clone()),
             "PaymentIndex",
@@ -8180,6 +8769,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
         (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
         (DataKey::AttestationHash(id), "AttestationHash", 2),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
+        (DataKey::FeeDestination, "FeeDestination", 1),
     ]
 }
 
@@ -8221,7 +8811,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        25,
+        26,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -8252,6 +8842,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::PaymentTxHash(_) => "PaymentTxHash",
             DataKey::AttestationHash(_) => "AttestationHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
+            DataKey::FeeDestination => "FeeDestination",
         };
         assert_eq!(
             matched, *name,
@@ -9251,7 +9842,14 @@ fn list_by_creator_empty_when_start_beyond_index() {
     let id = register_default(&env, &creator, &client, "emptc3");
     let page = client.list_by_creator(&creator, &5u32, &20u32);
     assert_eq!(page.len(), 0);
-    assert_eq!(client.list_by_creator(&creator, &0u32, &1u32).get(0).unwrap().id, id);
+    assert_eq!(
+        client
+            .list_by_creator(&creator, &0u32, &1u32)
+            .get(0)
+            .unwrap()
+            .id,
+        id
+    );
 }
 
 #[test]
@@ -9469,7 +10067,10 @@ fn record_payment_rejects_same_tx_hash_with_different_receipt_id() {
         "a second receipt reusing the same tx_hash must be rejected explicitly"
     );
     // The first receipt stays usable; the second never materialized.
-    assert_eq!(client.get_payment(&String::from_str(&env, "rcpt-a")).state, PaymentState::Escrowed);
+    assert_eq!(
+        client.get_payment(&String::from_str(&env, "rcpt-a")).state,
+        PaymentState::Escrowed
+    );
     assert_eq!(
         client.try_get_payment(&String::from_str(&env, "rcpt-b")),
         Err(Ok(Error::NotFound))
@@ -9501,8 +10102,18 @@ fn record_payment_allows_same_receipt_id_with_different_tx_hash() {
         &1_000_000i128,
         &tx_b,
     );
-    assert_eq!(client.get_payment(&String::from_str(&env, "rcpt-only")).tx_hash, tx_a);
-    assert_eq!(client.get_payment(&String::from_str(&env, "rcpt-second")).tx_hash, tx_b);
+    assert_eq!(
+        client
+            .get_payment(&String::from_str(&env, "rcpt-only"))
+            .tx_hash,
+        tx_a
+    );
+    assert_eq!(
+        client
+            .get_payment(&String::from_str(&env, "rcpt-second"))
+            .tx_hash,
+        tx_b
+    );
 }
 
 include!("test/lifecycle_events.rs");

@@ -182,8 +182,15 @@ const SAMPLE_OVERRIDES: Record<string, Record<string, unknown>> = {
     newCreator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
   mindvault_update_metadata: { metadata: "ipfs://QmProbe" },
+  mindvault_freeze: { confirm: "freeze_metadata" },
+  mindvault_royalty: {
+    royaltyRecipient: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+  },
   mindvault_import_wallet: {
     secretKey: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  },
+  mindvault_publish_batch: {
+    items: [{ title: "Probe Resource", price: "1.00", externalUrl: "https://example.com/probe" }],
   },
 };
 
