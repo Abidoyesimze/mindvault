@@ -84,6 +84,7 @@ Available tools:
 | `mindvault_tx_status`          | Look up a Stellar transaction status by hash                               | `"Check tx a1b2c3d4..."`                                        |
 | `mindvault_reset`              | Clear the persisted wallet and publisher API key; needs confirm: true      | `"Reset my agent credentials"`                                  |
 | `mindvault_verify_install`     | Verify the MCP server install and configuration (local checks, no network) | `"Verify my install"`                                           |
+| `mindvault_debug_bundle`       | Export a sanitized debug bundle for bug reports (secrets removed, offline) | `"Export a debug bundle for this ticket"`                       |
 
 ### Install
 
@@ -131,6 +132,8 @@ Tools with structured results (catalog, wallet, preview, buy, registry, receipts
 Long-running tools stream MCP `notifications/progress` updates when the client supplies a progress token — `mindvault_publish_status` with `wait: true` reports every poll while verification settles, so an agent sees movement instead of a hung call. See **[docs/mcp-progress-notifications.md](docs/mcp-progress-notifications.md)**.
 
 Every outbound call runs under a configurable `AbortController` deadline, so a hung backend fails fast instead of blocking the agent. Idempotent reads additionally retry transient failures with bounded, jittered backoff — payments never do, since a replay could settle twice. See **[docs/mcp-timeouts-retries.md](docs/mcp-timeouts-retries.md)**.
+
+USDC amounts arrive in two encodings — Horizon decimals and Soroban stroops, a factor of 10⁷ apart — so every conversion runs through one tagged boundary that a balance cannot cross without declaring its unit. See **[docs/mcp-usdc-units.md](docs/mcp-usdc-units.md)**.
 
 ## Project Structure
 

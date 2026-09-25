@@ -33,22 +33,14 @@ import { filterToolsForReadOnlyMode } from "./readOnlyMode.js";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
 
 /**
- * Defined and validated, but with no case in the dispatch switch.
+ * Tools that are defined and validated but have no dispatch handler.
  *
- * `mindvault_set_tags` has an entry in `TOOL_DEFINITIONS`, a spec in
- * `TOOL_ARGUMENT_SPECS`, an output schema, and a row in the generated tool
- * reference — but no handler, as `docs/mcp-structured-output.md` records. It is
- * withheld from ListTools rather than advertised: an agent that calls an
- * advertised tool and gets `Unknown tool` learns nothing useful, whereas one
- * that never sees it simply plans around it.
- *
- * This list is a ledger of known gaps, not a place to park new tools.
+ * This is a ledger of known gaps, not a place to park new tools.
  * `listToolsContract.test.ts` asserts it names exactly the tools that are
- * missing a handler, so implementing `mindvault_set_tags` fails the suite until
- * this entry is removed, and adding a definition without a handler fails until
- * one is added here on purpose.
+ * missing a handler, so every new definition must be either implemented or
+ * explicitly withheld.
  */
-export const TOOLS_WITHOUT_HANDLERS: readonly string[] = ["mindvault_set_tags"];
+export const TOOLS_WITHOUT_HANDLERS: readonly string[] = [];
 
 const WITHOUT_HANDLERS: ReadonlySet<string> = new Set(TOOLS_WITHOUT_HANDLERS);
 

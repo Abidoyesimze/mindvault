@@ -40,6 +40,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_setup_wallet: {},
   mindvault_wallet_info: {},
   mindvault_use_profile: { name: "publisher" },
+  mindvault_switch_network_profile: { name: "mainnet", network: "mainnet" },
   mindvault_list_profiles: {},
   mindvault_browse: {},
   mindvault_search: { query: "stellar" },
@@ -60,9 +61,13 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_check_consistency: { resourceId: "res-001" },
   mindvault_registry_lookup: { resourceId: "res-001" },
   mindvault_registry_list: {},
+  mindvault_registry_count: {},
+  mindvault_registry_count: {},
   mindvault_tx_status: { txHash: VALID_SHA256 },
   mindvault_reset: {},
   mindvault_backup_state: { passphrase: "correct-horse" },
+  mindvault_resource_provenance: { resourceId: "res-001" },
+  mindvault_resource_change_log: { resourceId: "res-001" },
   mindvault_restore_state: { blob: "v1:abc", passphrase: "correct-horse" },
   mindvault_metrics: {},
   mindvault_update_metadata: { resourceId: "res-001", metadata: "ipfs://Qm123" },
@@ -73,11 +78,18 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   },
   mindvault_set_listed: { resourceId: "res-001", listed: true },
   mindvault_set_tags: { resourceId: "res-001", tags: ["dataset"] },
+  mindvault_freeze: { resourceId: "res-001", confirm: "freeze_metadata" },
+  mindvault_fee_config: {},
+  mindvault_royalty: {
+    resourceId: "res-001",
+    royaltyRecipient: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+  },
   mindvault_check_state_permissions: {},
   mindvault_registry_health: {},
   mindvault_import_wallet: {},
   mindvault_rotate_publisher_key: {},
   mindvault_verify_install: {},
+  mindvault_debug_bundle: { auditLogLines: 50, includeEnvironment: true },
   mindvault_recover_catalog_cache: {},
 };
 
@@ -473,5 +485,20 @@ describe("mindvault_export_receipts arguments", () => {
 
   it("rejects a limit outside the supported range", () => {
     expect(expectInvalid("mindvault_export_receipts", { limit: 0 }).issues).toHaveLength(1);
+  });
+});
+
+describe("mindvault_debug_bundle", () => {
+  it("accepts an empty call and both arguments", () => {
+    expect(() => validateToolArgs("mindvault_debug_bundle", {})).not.toThrow();
+    expect(() =>
+      validateToolArgs("mindvault_debug_bundle", { auditLogLines: 0, includeEnvironment: false }),
+    ).not.toThrow();
+  });
+
+  it("rejects an audit line count outside 0..500 and a non-boolean flag", () => {
+    expectInvalid("mindvault_debug_bundle", { auditLogLines: 501 });
+    expectInvalid("mindvault_debug_bundle", { auditLogLines: -1 });
+    expectInvalid("mindvault_debug_bundle", { includeEnvironment: "maybe" });
   });
 });

@@ -25,8 +25,10 @@ export function resolveExplorerNetwork(env: NodeJS.ProcessEnv = process.env): Ex
 }
 
 /** Base explorer URL for a given network segment. */
-function explorerBase(network: ExplorerNetwork): string {
-  return `https://stellar.expert/explorer/${network}`;
+function explorerBase(network: ExplorerNetwork, env: NodeJS.ProcessEnv = process.env): string {
+  const preset = registryNetworks[resolveStellarNetwork(env.STELLAR_NETWORK)];
+  const baseUrl = env.HORIZON_URL?.trim() || preset.explorerBaseUrl;
+  return `${baseUrl.replace(/\/+$/, "")}/explorer/${network}`;
 }
 
 /**
