@@ -40,6 +40,7 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_import_wallet",
   "mindvault_rotate_publisher_key",
   "mindvault_verify_install",
+  "mindvault_debug_bundle",
   "mindvault_recover_catalog_cache",
   "mindvault_publish_status",
   "mindvault_purchase_history",

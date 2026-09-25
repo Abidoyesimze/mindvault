@@ -1,180 +1,93 @@
 #!/usr/bin/env tsx
 /**
- * Generate docs/mcp-tool-reference.md from TOOL_DEFINITIONS in src/tools.ts.
+ * Generate, or verify, the tool documentation derived from TOOL_DEFINITIONS in
+ * src/tools.ts:
+ *
+ *   docs/mcp-tool-reference.md         grouped reference table
+ *   mcp/GENERATED_MCP_TOOL_SUMMARY.md  flat summary shipped with the package
  *
  * The tool descriptions in tools.ts are the single source of truth: they are
- * what agent clients receive via ListTools and what operators need to understand
- * what each tool does. This script serialises them into a human-readable
- * Markdown reference so the docs page is always in sync with the code.
+ * what agent clients receive via ListTools and what operators need to
+ * understand what each tool does. Both files are serialised from that array so
+ * the docs cannot drift from the code without a check noticing.
  *
  * Usage:
- *   pnpm --filter @mindvault/mcp generate-tool-docs
- *   # or from mcp/
- *   pnpm generate-tool-docs
+ *   pnpm --filter @mindvault/mcp generate-tool-docs          # write both files
+ *   pnpm --filter @mindvault/mcp check-tool-docs             # exit 1 if either is stale
  *
- * The command is idempotent — running it twice produces identical output.
- * Commit the generated file so CI and contributors always have it without
- * running the command first.
+ * Output is passed through prettier with the repository configuration before
+ * it is written or compared, because the commit hook (`lint-staged`) formats
+ * every staged Markdown file: comparing against raw output would flag every
+ * committed file as stale. The command is idempotent; running it twice
+ * produces identical output. Commit the generated files so CI and contributors
+ * always have them without running the command first.
  *
- * A staleness guard in src/toolDescriptions.test.ts verifies the committed
- * file matches TOOL_DEFINITIONS; a PR that updates a description in tools.ts
- * without regenerating fails the test suite.
+ * Freshness is enforced twice: `check-tool-docs` runs as a CI step, and
+ * `src/toolDocs.test.ts` asserts the same equality under `pnpm test`. The
+ * older heuristics in `src/toolDescriptions.test.ts` (every name and
+ * description present, counts match) remain as a readable first line of
+ * defence.
  */
 
-import { writeFileSync, mkdirSync } from "fs";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import * as prettier from "prettier";
+
 import { TOOL_DEFINITIONS } from "../src/tools.js";
+import { REGENERATE_COMMAND, TOOL_DOC_TARGETS, toolDocFreshness } from "../src/toolDocs.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const docsDir = join(here, "..", "..", "docs");
-const outPath = join(docsDir, "mcp-tool-reference.md");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const checkOnly = process.argv.includes("--check");
 
-/**
- * Classify a tool into a functional group so the reference page is scannable
- * rather than a single flat list of 34 tools.
- */
-function groupOf(name: string): string {
-  if (["mindvault_setup_wallet", "mindvault_wallet_info", "mindvault_import_wallet"].includes(name))
-    return "Wallet";
-  if (["mindvault_use_profile", "mindvault_list_profiles"].includes(name)) return "Profiles";
-  if (["mindvault_browse", "mindvault_search", "mindvault_preview"].includes(name))
-    return "Catalog";
-  if (
-    [
-      "mindvault_register",
-      "mindvault_publish",
-      "mindvault_publish_status",
-      "mindvault_buy",
-    ].includes(name)
-  )
-    return "Publishing & Buying";
-  if (
-    [
-      "mindvault_register_onchain",
-      "mindvault_update_metadata",
-      "mindvault_set_price",
-      "mindvault_set_tags",
-      "mindvault_transfer_ownership",
-      "mindvault_set_listed",
-    ].includes(name)
-  )
-    return "On-chain Management";
-  if (
-    [
-      "mindvault_registry_info",
-      "mindvault_registry_lookup",
-      "mindvault_registry_list",
-      "mindvault_registry_health",
-      "mindvault_check_consistency",
-      "mindvault_check_bindings",
-      "mindvault_tx_status",
-    ].includes(name)
-  )
-    return "Registry & Diagnostics";
-  if (["mindvault_purchase_history", "mindvault_export_receipts"].includes(name)) return "Receipts";
-  if (
-    [
-      "mindvault_backup_state",
-      "mindvault_restore_state",
-      "mindvault_reset",
-      "mindvault_check_state_permissions",
-    ].includes(name)
-  )
-    return "State Management";
-  if (
-    [
-      "mindvault_agent_status",
-      "mindvault_network_profile",
-      "mindvault_metrics",
-      "mindvault_rotate_publisher_key",
-      "mindvault_verify_install",
-    ].includes(name)
-  )
-    return "Operations";
-  return "Other";
+/** Format exactly as `lint-staged` would for this path. */
+async function formatForPath(content: string, relativePath: string): Promise<string> {
+  const filepath = join(repoRoot, relativePath);
+  const options = (await prettier.resolveConfig(filepath)) ?? {};
+  return prettier.format(content, { ...options, filepath });
 }
 
-/** Escape pipe characters inside a Markdown table cell. */
-function escapeCell(text: string): string {
-  return text.replace(/\|/g, "\\|");
-}
+async function main(): Promise<void> {
+  const mode = checkOnly ? "checking" : "generating";
+  console.log(`MindVault MCP — ${mode} tool docs (${TOOL_DEFINITIONS.length} tools)`);
 
-function generate(): string {
-  const groups = new Map<string, typeof TOOL_DEFINITIONS>();
-  const ORDER = [
-    "Wallet",
-    "Profiles",
-    "Catalog",
-    "Publishing & Buying",
-    "On-chain Management",
-    "Registry & Diagnostics",
-    "Receipts",
-    "State Management",
-    "Operations",
-    "Other",
-  ];
+  let stale = 0;
+  for (const target of TOOL_DOC_TARGETS) {
+    const absolute = join(repoRoot, target.relativePath);
+    const expected = await formatForPath(target.render(TOOL_DEFINITIONS), target.relativePath);
 
-  for (const tool of TOOL_DEFINITIONS) {
-    const g = groupOf(tool.name);
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g)!.push(tool);
-  }
-
-  const lines: string[] = [
-    "# MCP Tool Reference",
-    "",
-    "<!-- Generated by scripts/generate-tool-docs.ts — do not edit by hand. -->",
-    "<!-- Run `pnpm --filter @mindvault/mcp generate-tool-docs` to regenerate. -->",
-    "",
-    "Every tool the MindVault MCP server advertises via ListTools, grouped by",
-    "function. Descriptions come directly from",
-    "[`mcp/src/tools.ts`](../mcp/src/tools.ts) — the single source of truth for",
-    "what agent clients receive.",
-    "",
-    "For argument contracts and validation rules see",
-    "[mcp-tool-arguments.md](mcp-tool-arguments.md).",
-    "For structured JSON results (`structuredContent` + `outputSchema`) see",
-    "[mcp-structured-output.md](mcp-structured-output.md).",
-    "For client installation and configuration see",
-    "[mcp-client-configs.md](mcp-client-configs.md).",
-    "",
-    `**${TOOL_DEFINITIONS.length} tools** as of last generation.`,
-    "",
-    "---",
-    "",
-  ];
-
-  for (const groupName of ORDER) {
-    const tools = groups.get(groupName);
-    if (!tools || tools.length === 0) continue;
-
-    lines.push(`## ${groupName}`, "");
-    lines.push("| Tool | Description | Structured |");
-    lines.push("| --- | --- | --- |");
-    for (const tool of tools) {
-      const structured = tool.outputSchema ? "yes" : "text only";
-      lines.push(`| \`${tool.name}\` | ${escapeCell(tool.description)} | ${structured} |`);
+    if (!checkOnly) {
+      mkdirSync(dirname(absolute), { recursive: true });
+      writeFileSync(absolute, expected, "utf-8");
+      console.log(`  wrote ${target.relativePath}`);
+      continue;
     }
-    lines.push("");
+
+    const committed = existsSync(absolute) ? readFileSync(absolute, "utf-8") : null;
+    const freshness = toolDocFreshness(committed, expected);
+    if (freshness === "fresh") {
+      console.log(`  ✓ ${target.relativePath}`);
+    } else {
+      stale += 1;
+      console.log(`  ✗ ${target.relativePath} is ${freshness}`);
+    }
   }
 
-  lines.push("---", "");
-  lines.push(
-    `_This file was generated from \`mcp/src/tools.ts\` — ${TOOL_DEFINITIONS.length} tools._`,
-    "",
-  );
+  if (checkOnly) {
+    if (stale > 0) {
+      console.error(
+        `\n${stale} generated tool doc(s) do not match src/tools.ts. Regenerate and commit:\n  ${REGENERATE_COMMAND}`,
+      );
+      process.exit(1);
+    }
+    console.log(`\n✓ ${TOOL_DOC_TARGETS.length} generated tool docs are up to date`);
+    return;
+  }
 
-  return lines.join("\n");
+  console.log(`\n✓ Tool docs written (${TOOL_DEFINITIONS.length} tools)`);
 }
 
-function main(): void {
-  console.log("MindVault MCP — generating tool reference docs");
-  mkdirSync(docsDir, { recursive: true });
-  const content = generate();
-  writeFileSync(outPath, content, "utf-8");
-  console.log(`  wrote ${outPath}`);
-  console.log(`\n✓ Tool reference written (${TOOL_DEFINITIONS.length} tools)`);
-}
-
-main();
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

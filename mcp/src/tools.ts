@@ -41,6 +41,11 @@ import {
   WALLET_SETUP_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
+import {
+  DEBUG_BUNDLE_DEFAULT_AUDIT_LINES,
+  DEBUG_BUNDLE_MAX_AUDIT_LINES,
+  DEBUG_BUNDLE_OUTPUT_SCHEMA,
+} from "./debugBundleSchema.js";
 
 /**
  * The `confirmPaid` argument advertised by every tool the paid-operation policy
@@ -1171,6 +1176,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: { type: "object", properties: {}, required: [] },
     annotations: {
       title: "Verify Install",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_debug_bundle",
+    description:
+      "Export a sanitized debug bundle to attach to a bug report or support ticket: resolved configuration, startup diagnostics, install checks, a profile summary (addresses only), state-file permissions, metrics, catalog cache status, and the tail of the audit log. Secret keys, API keys, and tokens never enter the bundle; public keys and contract ids are kept so it stays useful. Local and read-only, no network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        auditLogLines: {
+          type: "integer",
+          minimum: 0,
+          maximum: DEBUG_BUNDLE_MAX_AUDIT_LINES,
+          description: `Audit-log entries to include from the end of MINDVAULT_AUDIT_LOG_FILE (0–${DEBUG_BUNDLE_MAX_AUDIT_LINES}, default ${DEBUG_BUNDLE_DEFAULT_AUDIT_LINES}). 0 omits the section.`,
+          examples: [50, 200],
+        },
+        includeEnvironment: {
+          type: "boolean",
+          description:
+            "Include the MindVault-related environment variables with credential-like values masked. Default true; pass false to omit the section entirely.",
+          examples: [true, false],
+        },
+      },
+      required: [],
+    },
+    outputSchema: DEBUG_BUNDLE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Export Debug Bundle",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
