@@ -17,6 +17,7 @@ export const MAINNET_GATED_TOOLS = [
   "mindvault_setup_wallet",
   "mindvault_register",
   "mindvault_publish",
+  "mindvault_publish_batch",
   "mindvault_buy",
   "mindvault_register_onchain",
   "mindvault_reset",

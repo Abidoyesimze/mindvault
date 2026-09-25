@@ -398,6 +398,36 @@ export function mockSetTags(resourceId: string, tags: string[]): string {
 }
 
 /**
+ * Deterministic mock for batch publish. Returns a summary that mirrors the
+ * real `publishBatch` output with all items approved and registered on-chain.
+ */
+export function mockPublishBatch(
+  items: Array<{ title: string; description?: string; price: string; externalUrl: string }>,
+): string {
+  const itemResults = items.map((item, i) => ({
+    index: i,
+    title: item.title,
+    id: `mock-batch-${i + 1}`,
+    verificationStatus: "approved" as const,
+    onchainStatus: "registered",
+  }));
+  return JSON.stringify(
+    {
+      requested: items.length,
+      verified: items.length,
+      rejected: 0,
+      errored: 0,
+      onchainStatus: "registered",
+      txHash: `MOCK_TX_BATCH_REGISTER`,
+      items: itemResults,
+      source: "on-chain (mock)",
+    },
+    null,
+    2,
+  );
+}
+
+/**
  * Deterministic mock receipt for buy flows. Returns a purchase receipt object
  * that mirrors the shape of a real x402 payment receipt, with deterministic
  * fields so tests can assert on exact values.
@@ -509,4 +539,36 @@ export function mockRegistryList(
     null,
     2,
   );
+}
+
+/**
+ * Stand-in for the on-chain count()/listed_count()/creator_resource_count()
+ * trio. Derives values from the same MOCK_REGISTRY_RESOURCES seed so the
+ * numbers stay consistent with mockRegistryList.
+ */
+export function mockRegistryCount(creator: string | undefined, contractId: string): string {
+  const all = MOCK_REGISTRY_RESOURCES;
+  const count = all.length;
+  const listedCount = all.filter((r) => r.listed).length;
+
+  const payload: {
+    source: string;
+    count: number;
+    listedCount: number;
+    creatorCount?: number;
+    creator?: string;
+    contract: string;
+  } = {
+    source: "on-chain (mock)",
+    count,
+    listedCount,
+    contract: contractId,
+  };
+
+  if (creator != null) {
+    payload.creator = creator;
+    payload.creatorCount = all.filter((r) => r.creator === creator).length;
+  }
+
+  return JSON.stringify(payload, null, 2);
 }

@@ -26,6 +26,7 @@
 import { type ExplorerNetwork } from "@mindvault/registry-client";
 import { explorerTxUrl, resolveExplorerNetwork } from "./stellarExplorer.js";
 import { listPurchases, type PurchaseReceipt } from "./purchaseHistory.js";
+import { sumUsdc, trimUsdc } from "./usdcAmount.js";
 
 /** Schema identifier carried by every export, so consumers can version-check. */
 export const RECEIPT_EXPORT_SCHEMA = "mindvault.receipt-export/v1";
@@ -214,18 +215,8 @@ export function toExportedReceipt(
  * recorded before the price was known) contribute nothing.
  */
 export function sumAmounts(receipts: ExportedReceipt[]): string {
-  const SCALE = 10_000_000n; // 7 decimal places, Stellar's stroop precision
-  let total = 0n;
-  for (const r of receipts) {
-    const match = /^(\d+)(?:\.(\d{1,7})\d*)?$/.exec(r.amount.trim());
-    if (!match) continue;
-    const fraction = (match[2] ?? "").padEnd(7, "0");
-    total += BigInt(match[1]) * SCALE + BigInt(fraction);
-  }
-  if (total === 0n) return "0";
-  const whole = total / SCALE;
-  const fraction = (total % SCALE).toString().padStart(7, "0").replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : `${whole}`;
+  const total = sumUsdc(receipts.map((r) => r.amount));
+  return trimUsdc(total) || "0";
 }
 
 /** Quote one CSV field per RFC 4180 (double the quotes, wrap when needed). */
