@@ -516,14 +516,16 @@ exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = 
 {
   "properties": {
     "format": {
-      "description": "Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope's csv field.",
+      "description": "Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope's csv field; "ndjson" renders each row as a JSON object on its own line in the envelope's ndjson field.",
       "enum": [
         "json",
         "csv",
+        "ndjson",
       ],
       "examples": [
         "json",
         "csv",
+        "ndjson",
       ],
       "type": "string",
     },
@@ -637,11 +639,16 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
       "enum": [
         "json",
         "csv",
+        "ndjson",
       ],
       "type": "string",
     },
     "generatedAt": {
       "description": "ISO-8601 instant the export was produced.",
+      "type": "string",
+    },
+    "ndjson": {
+      "description": "Newline-Delimited JSON document of the same rows. Present only when format is "ndjson".",
       "type": "string",
     },
     "receipts": {

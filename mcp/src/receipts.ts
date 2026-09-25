@@ -50,7 +50,7 @@ export const RECEIPT_CSV_COLUMNS = [
   "explorerUrl",
 ] as const;
 
-export type ReceiptExportFormat = "json" | "csv";
+export type ReceiptExportFormat = "json" | "csv" | "ndjson";
 
 /** One purchase, normalized for export. Absent values are explicit nulls. */
 export interface ExportedReceipt {
@@ -90,6 +90,8 @@ export interface ReceiptExport {
   receipts: ExportedReceipt[];
   /** RFC 4180 document of the same rows — present only when format is "csv". */
   csv?: string;
+  /** Newline-Delimited JSON document of the same rows — present only when format is "ndjson". */
+  ndjson?: string;
 }
 
 export class ReceiptExportError extends Error {
@@ -149,8 +151,8 @@ export function normalizeReceiptExportOptions(
 
   let format: ReceiptExportFormat = "json";
   if (raw.format !== undefined && raw.format !== null && raw.format !== "") {
-    if (raw.format !== "json" && raw.format !== "csv") {
-      throw new ReceiptExportError('Invalid format: must be "json" or "csv".');
+    if (raw.format !== "json" && raw.format !== "csv" && raw.format !== "ndjson") {
+      throw new ReceiptExportError('Invalid format: must be "json", "csv", or "ndjson".');
     }
     format = raw.format;
   }
@@ -234,6 +236,18 @@ export function receiptsToCsv(receipts: ExportedReceipt[]): string {
   return lines.join("\r\n");
 }
 
+/**
+ * Render export rows as an NDJSON document (Newline-Delimited JSON).
+ *
+ * Each row is a self-contained JSON object on its own line, making the format
+ * easy to stream, grep, or feed line-by-line into another process. An empty
+ * export produces an empty string (no newline), consistent with how tools like
+ * `jq --raw-input` handle an empty NDJSON file.
+ */
+export function receiptsToNdjson(receipts: ExportedReceipt[]): string {
+  return receipts.map((receipt) => JSON.stringify(receipt)).join("\n");
+}
+
 /** Apply the date range and row cap to receipts already sorted newest-first. */
 function applyBounds(
   receipts: ExportedReceipt[],
@@ -278,6 +292,7 @@ export function buildReceiptExport(
     currency: RECEIPT_CURRENCY,
     receipts: rows,
     ...(options.format === "csv" ? { csv: receiptsToCsv(rows) } : {}),
+    ...(options.format === "ndjson" ? { ndjson: receiptsToNdjson(rows) } : {}),
   };
 }
 
@@ -310,7 +325,7 @@ export const RECEIPT_EXPORT_OUTPUT_SCHEMA = {
   properties: {
     schema: { type: "string", const: RECEIPT_EXPORT_SCHEMA },
     generatedAt: { type: "string", description: "ISO-8601 instant the export was produced." },
-    format: { type: "string", enum: ["json", "csv"] },
+    format: { type: "string", enum: ["json", "csv", "ndjson"] },
     filters: {
       type: "object",
       description: "The filters this export was produced with; null where unset.",
@@ -360,6 +375,11 @@ export const RECEIPT_EXPORT_OUTPUT_SCHEMA = {
     csv: {
       type: "string",
       description: 'RFC 4180 document of the same rows. Present only when format is "csv".',
+    },
+    ndjson: {
+      type: "string",
+      description:
+        'Newline-Delimited JSON document of the same rows. Present only when format is "ndjson".',
     },
   },
   required: [
