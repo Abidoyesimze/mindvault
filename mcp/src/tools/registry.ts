@@ -26,8 +26,9 @@ import { fetchWithTimeout } from "../httpTimeout.js";
 import { withRetry } from "../retry.js";
 import { parseMetadataHash } from "../metadataHash.js";
 import { mainnetAllowedFromEnv, formatMainnetDiagnostics } from "../mainnetGuardrails.js";
-import { mockRegistryList, mockRegistryLookup } from "../mock.js";
+import { mockRegistryCount, mockRegistryList, mockRegistryLookup } from "../mock.js";
 import { type AgentWallet } from "../profiles.js";
+import { stroopsToUsdc } from "../usdcAmount.js";
 
 export interface BalanceDetails {
   status: "missing" | "no-trustline" | "zero" | "funded";
@@ -164,6 +165,10 @@ export async function getAccountBalances(
 }
 
 export function formatResource(r: any): string {
+  const tags = Array.isArray(r.tags) && r.tags.length > 0 ? `\n  Tags: ${r.tags.join(", ")}` : "";
+  if (tags) {
+    return `[${r.id}] ${r.title} - $${r.price} USDC\n  ${r.description ?? ""}${tags}\n  ${r.accessUrl}`;
+  }
   return `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`;
 }
 
@@ -187,15 +192,6 @@ export async function insufficientFundsMessage(
     `Shortfall: ${shortfall.toFixed(7).replace(/\.?0+$/, "")} USDC`,
     `Fund ${wallet.publicKey} with the shortfall and retry.`,
   ].join("\n");
-}
-
-function stroopsToUsdc(stroops: bigint): string {
-  const STROOPS_PER_USDC = 10_000_000n;
-  const negative = stroops < 0n;
-  const abs = negative ? -stroops : stroops;
-  const whole = abs / STROOPS_PER_USDC;
-  const frac = abs % STROOPS_PER_USDC;
-  return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(7, "0")}`;
 }
 
 export async function registryLookup(resourceId: string): Promise<string> {
@@ -344,6 +340,96 @@ export async function registryList(start: number, limit: number): Promise<string
     null,
     2,
   );
+}
+
+/**
+ * On-chain registry count family — mirrors the contract's count(),
+ * listed_count(), and creator_resource_count(creator) read-only calls.
+ *
+ * @param creator Optional Stellar public key. When supplied, also returns the
+ *   number of resources currently owned by that address.
+ */
+export async function registryCount(creator?: string): Promise<string> {
+  if (_isMock()) return mockRegistryCount(creator, REGISTRY_CONTRACT_ID);
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let count: number;
+  let listedCount: number;
+  let creatorCount: number | null = null;
+
+  try {
+    const countTx = await client.count();
+    count = Number(countTx.result);
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `Registry count() failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  try {
+    // listed_count is present in the Rust contract but not yet included in the
+    // generated TypeScript bindings; access via `as any` until bindings are
+    // regenerated with `pnpm contract:bindings`.
+    const listedTx = await (client as any).listed_count();
+    listedCount = Number(listedTx.result);
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `Registry listed_count() failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  if (creator) {
+    try {
+      const creatorTx = await (client as any).creator_resource_count({ creator });
+      creatorCount = Number(creatorTx.result);
+    } catch (err: unknown) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Registry creator_resource_count() failed for "${creator}" (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+  }
+
+  const payload: {
+    source: string;
+    count: number;
+    listedCount: number;
+    creatorCount?: number;
+    creator?: string;
+    contract: string;
+    network: string;
+    rpc: string;
+  } = {
+    source: "on-chain",
+    count,
+    listedCount,
+    contract: REGISTRY_CONTRACT_ID,
+    network: REGISTRY_NETWORK_PASSPHRASE,
+    rpc: SOROBAN_RPC_URL,
+  };
+
+  if (creator != null) {
+    payload.creator = creator;
+    payload.creatorCount = creatorCount!;
+  }
+
+  return JSON.stringify(payload, null, 2);
 }
 
 export function registryInfo(): string {

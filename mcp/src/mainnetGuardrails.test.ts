@@ -104,6 +104,9 @@ describe("assertMainnetMutationAllowed", () => {
     expect(() => assertMainnetMutationAllowed("mainnet", "mindvault_publish", {}, {})).toThrow(
       /confirmMainnet/,
     );
+    expect(() => assertMainnetMutationAllowed("mainnet", "mindvault_set_tags", {}, {})).toThrow(
+      /confirmMainnet/,
+    );
   });
 
   it("allows gated tools when confirmMainnet is true", () => {

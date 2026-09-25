@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   mockBuyReceipt,
   mockEnabledFromEnv,
+  mockSetTags,
   MOCK_CATALOG_RESOURCES,
   MOCK_REGISTRY_RESOURCES,
 } from "./mock.js";
@@ -54,6 +55,15 @@ describe("mockBuyReceipt", () => {
     const r2 = mockBuyReceipt("mock-1", "1.50");
     expect(r1.txHash).toBe(r2.txHash);
     expect(r1.receiptRef).toBe(r2.receiptRef);
+  });
+});
+
+describe("mockSetTags", () => {
+  it("returns a deterministic text-only result", () => {
+    const result = mockSetTags("mock-1", ["dataset", "research"]);
+    expect(result).toContain('Tags updated for resource "mock-1".');
+    expect(result).toContain("Tags: dataset, research");
+    expect(result).toContain("MOCK_TX_SET_TAGS_mock-1");
   });
 });
 

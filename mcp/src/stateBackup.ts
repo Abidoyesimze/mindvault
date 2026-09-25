@@ -31,6 +31,7 @@ import { STATE_VERSION, type ProfileState, type WalletProfile } from "./profiles
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
+const BACKUP_DIR = join(STATE_DIR, "backups");
 
 // scrypt cost params — tuned for interactive passphrase derivation (not hot path).
 // N=2^14 keeps OpenSSL maxmem happy in constrained CI/agent envs.
@@ -49,6 +50,10 @@ export class StateBackupError extends Error {
     super(message);
     this.name = "StateBackupError";
   }
+}
+
+export interface RestoreStateOptions {
+  expectedNetwork?: string;
 }
 
 export interface PersistedStateSecretMatch {
@@ -124,6 +129,18 @@ export function exportState(passphrase: string): string {
   return `v1:${salt.toString("base64")}:${nonce.toString("base64")}:${blob.toString("base64")}`;
 }
 
+/** Encrypt the current state and write a private recovery file. */
+export function exportStateFile(
+  passphrase: string,
+  now: Date = new Date(),
+  directory: string = BACKUP_DIR,
+): string {
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  const path = join(directory, `state-${stamp}.backup`);
+  writeAtomically(path, `${exportState(passphrase)}\n`, 0o600);
+  return path;
+}
+
 /**
  * Restore state from an encrypted backup string.
  *
@@ -135,6 +152,7 @@ export function restoreState(
   blob: string,
   passphrase: string,
   write: (state: ProfileState) => void,
+  options: RestoreStateOptions = {},
 ): string {
   if (!passphrase || passphrase.length < 8) {
     throw new StateBackupError("Passphrase must be at least 8 characters.");
@@ -180,6 +198,16 @@ export function restoreState(
   } catch {
     throw new StateBackupError("Backup contents are not valid state.");
   }
+  if (options.expectedNetwork) {
+    const mismatched = Object.entries(state.profiles).find(
+      ([, profile]) => profile.network && profile.network !== options.expectedNetwork,
+    );
+    if (mismatched) {
+      throw new StateBackupError(
+        `Backup belongs to network "${mismatched[1].network}" but the active profile uses "${options.expectedNetwork}".`,
+      );
+    }
+  }
   write(state);
   return `State restored: ${Object.keys(state.profiles).length} profile(s), active "${state.activeProfile}".`;
 }
@@ -216,6 +244,7 @@ function normalizePersisted(raw: unknown): ProfileState {
       }
     }
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
+    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
     profiles[name] = profile;
   }
   const requested = typeof obj.activeProfile === "string" ? obj.activeProfile : "default";
