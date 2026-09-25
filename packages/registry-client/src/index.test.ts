@@ -40,6 +40,7 @@ describe("network defaults", () => {
     expect(t.networkPassphrase).toBe(Networks.TESTNET);
     expect(t.x402Network).toBe("stellar:testnet");
     expect(t.sorobanRpcUrl).toBe("https://soroban-testnet.stellar.org");
+    expect(t.explorerBaseUrl).toBe("https://stellar.expert");
     expect(t.explorerNetwork).toBe("testnet");
     // Testnet ships a known deployed registry; consumers default to it.
     expect(t.defaultRegistryContractId).toMatch(/^C[A-Z0-9]{55}$/);
@@ -51,6 +52,7 @@ describe("network defaults", () => {
     expect(m.networkPassphrase).toBe(Networks.PUBLIC);
     expect(m.x402Network).toBe("stellar:pubnet");
     expect(m.sorobanRpcUrl).toBe("https://soroban.stellar.org");
+    expect(m.explorerBaseUrl).toBe("https://stellar.expert");
     expect(m.explorerNetwork).toBe("public");
     // Mainnet operators deploy their own contract; no baked-in default.
     expect(m.defaultRegistryContractId).toBeNull();
