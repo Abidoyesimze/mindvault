@@ -36,6 +36,10 @@ exports[`tool schema snapshots > mindvault_backup_state > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_backup_state > input schema 1`] = `
 {
   "properties": {
+    "confirm": {
+      "description": "Required to write the encrypted recovery file. Omitted or false returns a safety preview.",
+      "type": "boolean",
+    },
     "passphrase": {
       "description": "Passphrase used to encrypt the backup (min 8 characters). Keep it offline.",
       "type": "string",
@@ -512,14 +516,16 @@ exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = 
 {
   "properties": {
     "format": {
-      "description": "Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope's csv field.",
+      "description": "Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope's csv field; "ndjson" renders each row as a JSON object on its own line in the envelope's ndjson field.",
       "enum": [
         "json",
         "csv",
+        "ndjson",
       ],
       "examples": [
         "json",
         "csv",
+        "ndjson",
       ],
       "type": "string",
     },
@@ -633,11 +639,16 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
       "enum": [
         "json",
         "csv",
+        "ndjson",
       ],
       "type": "string",
     },
     "generatedAt": {
       "description": "ISO-8601 instant the export was produced.",
+      "type": "string",
+    },
+    "ndjson": {
+      "description": "Newline-Delimited JSON document of the same rows. Present only when format is "ndjson".",
       "type": "string",
     },
     "receipts": {
@@ -1180,6 +1191,166 @@ exports[`tool schema snapshots > mindvault_publish > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_publish_batch > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": false,
+  "readOnlyHint": false,
+  "title": "Publish Batch",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_publish_batch > input schema 1`] = `
+{
+  "properties": {
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
+    "items": {
+      "description": "List of resources to publish (1–10 items). Each item must include title, price, and externalUrl.",
+      "items": {
+        "properties": {
+          "description": {
+            "description": "Optional description (max 2048 characters).",
+            "type": "string",
+          },
+          "externalUrl": {
+            "description": "Public http(s) URL buyers receive after payment.",
+            "examples": [
+              "https://example.com/data.json",
+            ],
+            "type": "string",
+          },
+          "price": {
+            "description": "Price in USDC as a decimal string, e.g. '5.00'.",
+            "examples": [
+              "1.00",
+              "5.00",
+              "10.00",
+            ],
+            "type": "string",
+          },
+          "title": {
+            "description": "Resource title (1–256 characters).",
+            "examples": [
+              "My Dataset",
+              "Research Paper #1",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "title",
+          "price",
+          "externalUrl",
+        ],
+        "type": "object",
+      },
+      "maxItems": 10,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [
+    "items",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_publish_batch > output schema 1`] = `
+{
+  "properties": {
+    "errored": {
+      "type": "number",
+    },
+    "items": {
+      "items": {
+        "properties": {
+          "error": {
+            "type": "string",
+          },
+          "flags": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "id": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "index": {
+            "type": "number",
+          },
+          "onchainStatus": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "title": {
+            "type": "string",
+          },
+          "verificationStatus": {
+            "enum": [
+              "approved",
+              "rejected",
+              "error",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "index",
+          "title",
+          "id",
+          "verificationStatus",
+          "onchainStatus",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "onchainStatus": {
+      "type": "string",
+    },
+    "rejected": {
+      "type": "number",
+    },
+    "requested": {
+      "type": "number",
+    },
+    "txHash": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "verified": {
+      "type": "number",
+    },
+  },
+  "required": [
+    "requested",
+    "verified",
+    "rejected",
+    "errored",
+    "onchainStatus",
+    "txHash",
+    "items",
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_publish_status > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -1584,6 +1755,63 @@ exports[`tool schema snapshots > mindvault_register_onchain > output schema 1`] 
 }
 `;
 
+exports[`tool schema snapshots > mindvault_registry_count > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Registry Count",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_count > input schema 1`] = `
+{
+  "properties": {
+    "creator": {
+      "description": "Optional Stellar public key (G…). When supplied, also returns the number of resources currently owned by that address (creator_resource_count). Omit to return only the global counts.",
+      "examples": [
+        "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_count > output schema 1`] = `
+{
+  "properties": {
+    "contract": {},
+    "count": {
+      "type": "integer",
+    },
+    "creator": {
+      "type": "string",
+    },
+    "creatorCount": {
+      "type": "integer",
+    },
+    "listedCount": {
+      "type": "integer",
+    },
+    "network": {},
+    "rpc": {},
+    "source": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "source",
+    "count",
+    "listedCount",
+    "contract",
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_registry_health > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -1840,6 +2068,58 @@ exports[`tool schema snapshots > mindvault_reset > input schema 1`] = `
 `;
 
 exports[`tool schema snapshots > mindvault_reset > output schema 1`] = `null`;
+
+exports[`tool schema snapshots > mindvault_resource_change_log > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Resource Change Log",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_change_log > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "Resource identifier to inspect.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_change_log > output schema 1`] = `null`;
+
+exports[`tool schema snapshots > mindvault_resource_provenance > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Resource Provenance",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_provenance > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "Resource identifier to audit.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_resource_provenance > output schema 1`] = `null`;
 
 exports[`tool schema snapshots > mindvault_restore_state > annotations 1`] = `
 {
@@ -2476,6 +2756,41 @@ exports[`tool schema snapshots > mindvault_setup_wallet > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_switch_network_profile > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": false,
+  "title": "Switch Network Profile",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_switch_network_profile > input schema 1`] = `
+{
+  "properties": {
+    "name": {
+      "description": "Profile name to activate.",
+      "type": "string",
+    },
+    "network": {
+      "description": "Stellar network for this profile.",
+      "enum": [
+        "testnet",
+        "mainnet",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "name",
+    "network",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_switch_network_profile > output schema 1`] = `null`;
+
 exports[`tool schema snapshots > mindvault_transfer_ownership > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -2985,16 +3300,20 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_network_profile",
   "mindvault_preview",
   "mindvault_publish",
+  "mindvault_publish_batch",
   "mindvault_publish_status",
   "mindvault_purchase_history",
   "mindvault_recover_catalog_cache",
   "mindvault_register",
   "mindvault_register_onchain",
+  "mindvault_registry_count",
   "mindvault_registry_health",
   "mindvault_registry_info",
   "mindvault_registry_list",
   "mindvault_registry_lookup",
   "mindvault_reset",
+  "mindvault_resource_change_log",
+  "mindvault_resource_provenance",
   "mindvault_restore_state",
   "mindvault_rotate_publisher_key",
   "mindvault_search",
@@ -3002,6 +3321,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_set_price",
   "mindvault_set_tags",
   "mindvault_setup_wallet",
+  "mindvault_switch_network_profile",
   "mindvault_transfer_ownership",
   "mindvault_tx_status",
   "mindvault_update_metadata",

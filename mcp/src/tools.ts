@@ -25,10 +25,12 @@ import {
   ONCHAIN_MUTATION_OUTPUT_SCHEMA,
   PREVIEW_OUTPUT_SCHEMA,
   PUBLISH_BUY_OUTPUT_SCHEMA,
+  PUBLISH_BATCH_OUTPUT_SCHEMA,
   PUBLISH_STATUS_OUTPUT_SCHEMA,
   PURCHASE_HISTORY_OUTPUT_SCHEMA,
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
+  REGISTRY_COUNT_OUTPUT_SCHEMA,
   REGISTRY_INFO_OUTPUT_SCHEMA,
   REGISTRY_LIST_OUTPUT_SCHEMA,
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
@@ -165,6 +167,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "List Profiles",
       readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_switch_network_profile",
+    description:
+      "Switch the active wallet profile and Stellar network together, then re-run install verification for the selected network.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Profile name to activate." },
+        network: {
+          type: "string",
+          enum: ["testnet", "mainnet"],
+          description: "Stellar network for this profile.",
+        },
+      },
+      required: ["name", "network"],
+    },
+    annotations: {
+      title: "Switch Network Profile",
+      readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
     },
@@ -364,16 +389,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_export_receipts",
     description:
-      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, or RFC 4180 CSV in the envelope's csv field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
+      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, RFC 4180 CSV in the envelope's csv field, or Newline-Delimited JSON in the envelope's ndjson field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
     inputSchema: {
       type: "object",
       properties: {
         format: {
           type: "string",
-          enum: ["json", "csv"],
+          enum: ["json", "csv", "ndjson"],
           description:
-            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field.',
-          examples: ["json", "csv"],
+            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field; "ndjson" renders each row as a JSON object on its own line in the envelope\'s ndjson field.',
+          examples: ["json", "csv", "ndjson"],
         },
         resourceId: {
           type: "string",
@@ -585,6 +610,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_registry_count",
+    description:
+      "Return on-chain resource counts directly from the vault-registry contract: total registered resources (count), currently listed resources (listed_count), and optionally how many resources a specific creator currently owns (creator_resource_count). Use this to get a quick summary of registry size without paging through all entries.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creator: {
+          type: "string",
+          description:
+            "Optional Stellar public key (G…). When supplied, also returns the number of resources currently owned by that address (creator_resource_count). Omit to return only the global counts.",
+          examples: ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"],
+        },
+      },
+      required: [],
+    },
+    outputSchema: REGISTRY_COUNT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Count",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_tx_status",
     description:
       "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger number, close time, application order, and XDR envelopes. Useful for debugging on-chain registration failures.",
@@ -648,7 +697,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_backup_state",
     description:
-      "Export an encrypted backup of ~/.mindvault/state.json for moving agent environments. Requires a passphrase (min 8 chars). Output is a self-contained ciphertext blob — wallet secret keys and API keys never appear in plaintext. Restore with mindvault_restore_state using the same passphrase. Does not change reset behavior.",
+      "Export ~/.mindvault/state.json to a mode-0600 encrypted recovery file after an explicit confirmation step. Requires a passphrase (min 8 chars); wallet secret keys and API keys never appear in plaintext. Restore with mindvault_restore_state using the file contents and same passphrase.",
     inputSchema: {
       type: "object",
       properties: {
@@ -656,11 +705,52 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: "string",
           description: "Passphrase used to encrypt the backup (min 8 characters). Keep it offline.",
         },
+        confirm: {
+          type: "boolean",
+          description:
+            "Required to write the encrypted recovery file. Omitted or false returns a safety preview.",
+        },
       },
       required: ["passphrase"],
     },
     annotations: {
       title: "Back Up State",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_resource_provenance",
+    description:
+      "Return the chronological creator, purchase, and ownership-transfer chain recorded for a resource. Never exposes wallet secrets or API keys.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: { type: "string", description: "Resource identifier to audit." },
+      },
+      required: ["resourceId"],
+    },
+    annotations: {
+      title: "Resource Provenance",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_resource_change_log",
+    description:
+      "Return recent price and metadata changes recorded for a resource in chronological order.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: { type: "string", description: "Resource identifier to inspect." },
+      },
+      required: ["resourceId"],
+    },
+    annotations: {
+      title: "Resource Change Log",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -1082,6 +1172,62 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_publish_batch",
+    description:
+      "Publish up to 10 link resources in a single batch. Each resource is created and verified via x402 payment individually (the agent wallet pays the verification fee per item), then all verified resources are registered on-chain in one `register_batch` Soroban transaction — a single wallet approval covers the entire batch. Returns a summary with per-item verification status, on-chain status, and the batch transaction hash.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          description:
+            "List of resources to publish (1–10 items). Each item must include title, price, and externalUrl.",
+          items: {
+            type: "object",
+            properties: {
+              title: {
+                type: "string",
+                description: "Resource title (1–256 characters).",
+                examples: ["My Dataset", "Research Paper #1"],
+              },
+              description: {
+                type: "string",
+                description: "Optional description (max 2048 characters).",
+              },
+              price: {
+                type: "string",
+                description: "Price in USDC as a decimal string, e.g. '5.00'.",
+                examples: ["1.00", "5.00", "10.00"],
+              },
+              externalUrl: {
+                type: "string",
+                description: "Public http(s) URL buyers receive after payment.",
+                examples: ["https://example.com/data.json"],
+              },
+            },
+            required: ["title", "price", "externalUrl"],
+          },
+          minItems: 1,
+          maxItems: 10,
+        },
+        confirmMainnet: {
+          type: "boolean",
+          description:
+            "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+        },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
+      },
+      required: ["items"],
+    },
+    outputSchema: PUBLISH_BATCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Publish Batch",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
 ];

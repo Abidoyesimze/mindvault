@@ -118,6 +118,10 @@ fn storage_footprint_report() {
         royalty_bps: 250,
         fee_recipient: Some(admin.clone()),
     });
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
     client.record_payment(
         &settler,
         &receipt_id,
@@ -219,6 +223,12 @@ fn storage_footprint_report() {
             160,
         ),
         ("FeeConfig", DataKey::FeeConfig, StorageKind::Instance, 192),
+        (
+            "FeeDestination",
+            DataKey::FeeDestination,
+            StorageKind::Instance,
+            192,
+        ),
         ("Admin", DataKey::Admin, StorageKind::Instance, 80),
         (
             "Verifier grant",

@@ -4170,8 +4170,11 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
 
     // Verifier role, verification mirror, freeze, and index repair.
+    let old_verifier = Address::generate(&env);
     let verifier = Address::generate(&env);
-    client.add_verifier(&verifier); // -> "addverif"
+    client.add_verifier(&old_verifier); // -> "addverif"
+    record(&env, &client, &mut observed);
+    client.rotate_verifier(&old_verifier, &verifier); // -> "rmverif", "addverif", "verrot"
     record(&env, &client, &mut observed);
     client.set_verification_status(&r2, &verifier, &VerificationStatus::Verified, &None); // -> "verify"
     record(&env, &client, &mut observed);
@@ -4180,6 +4183,11 @@ fn full_workflow_emits_exactly_the_documented_events() {
         royalty_bps: 100,
         fee_recipient: Some(admin2.clone()),
     }); // -> "setfee"
+    record(&env, &client, &mut observed);
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: 250,
+        destination: FeeDestination::Burn,
+    });
     record(&env, &client, &mut observed);
 
     let buyer = Address::generate(&env);
@@ -4507,6 +4515,233 @@ fn set_fee_recipient_emits_setfee_event() {
 }
 
 #[test]
+fn fee_destination_defaults_to_disabled() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+}
+
+#[test]
+fn set_fee_destination_supports_burn_charity_and_clear() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin),
+    });
+
+    let burn = FeeDestinationConfig {
+        bps: 2_500,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&burn);
+    assert_eq!(client.get_fee_destination(), burn);
+
+    let charity = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Charity(Address::generate(&env)),
+    };
+    client.set_fee_destination(&charity);
+    assert_eq!(client.get_fee_destination(), charity);
+
+    let disabled = FeeDestinationConfig {
+        bps: 0,
+        destination: FeeDestination::None,
+    };
+    client.set_fee_destination(&disabled);
+    assert_eq!(client.get_fee_destination(), disabled);
+}
+
+#[test]
+fn set_fee_destination_emits_audit_event() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin),
+    });
+
+    env.ledger().set_sequence_number(321);
+    let new_destination = FeeDestinationConfig {
+        bps: 2_500,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&new_destination);
+
+    let events = env.events().all();
+    assert_eq!(events.len(), 1);
+    let (contract, topics, data) = events.get(0).unwrap();
+    assert_eq!(contract, client.address);
+    assert_eq!(topics.len(), 1);
+    let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+    assert_eq!(topic, symbol_short!("setdest"));
+    let event: FeeDestinationUpdated = data.try_into_val(&env).unwrap();
+    assert_eq!(
+        event.old_destination,
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+    assert_eq!(event.new_destination, new_destination);
+    assert_eq!(event.ledger, 321);
+}
+
+#[test]
+fn set_fee_destination_validates_bounds_and_combined_policy() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 0,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: MAX_FEE_DESTINATION_BPS + 1,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::FeeBpsTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::Charity(Address::generate(&env)),
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 2_500,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: 2_500,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+}
+
+#[test]
+fn set_fee_destination_requires_fee_config() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+    assert_eq!(
+        client.try_set_fee_destination(&FeeDestinationConfig {
+            bps: MAX_FEE_DESTINATION_BPS,
+            destination: FeeDestination::Burn,
+        }),
+        Err(Ok(Error::FeeConfigNotSet))
+    );
+}
+
+#[test]
+fn set_fee_destination_requires_admin_auth() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(Address::generate(&env)),
+    });
+    env.mock_auths(&[]);
+    let result = client.try_set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+    assert!(result.is_err());
+}
+
+#[test]
+fn set_fee_destination_fails_when_paused() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    client.set_paused(&admin, &true);
+    let result = client.try_set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
+    assert_eq!(result, Err(Ok(Error::ContractPaused)));
+    assert_eq!(
+        client.get_fee_destination(),
+        FeeDestinationConfig {
+            bps: 0,
+            destination: FeeDestination::None,
+        }
+    );
+}
+
+#[test]
+fn fee_destination_is_preserved_and_partial_routes_require_recipient() {
+    let (_env, _creator, admin, client) = setup_with_admin();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 1_000,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    let destination = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&destination);
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 2_000,
+        royalty_bps: 500,
+        fee_recipient: Some(admin.clone()),
+    });
+    assert_eq!(client.get_fee_destination(), destination);
+
+    assert_eq!(
+        client.try_set_fee_recipient(&None),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+    let full_destination = FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&full_destination);
+    client.set_fee_recipient(&None);
+    assert_eq!(client.get_fee_destination(), full_destination);
+    assert_eq!(client.get_fee_config().unwrap().fee_recipient, None);
+}
+
+#[test]
 fn set_fee_recipient_fails_when_paused() {
     let (env, _creator, admin, client) = setup_with_admin();
 
@@ -4674,6 +4909,100 @@ fn remove_verifier_revokes_verification_ability() {
     let res =
         client.try_set_verification_status(&id2, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::NotVerifier)));
+}
+
+#[test]
+fn admin_can_rotate_verifier_with_audit_event() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+
+    client.add_verifier(&old_verifier);
+    let ledger = env.ledger().sequence();
+    client.rotate_verifier(&old_verifier, &new_verifier);
+
+    let events = env.events().all();
+    assert!(!client.is_verifier(&old_verifier));
+    assert!(client.is_verifier(&new_verifier));
+
+    let mut found = false;
+    for i in 0..events.len() {
+        let (contract, topics, data) = events.get(i).unwrap();
+        if contract != client.address {
+            continue;
+        }
+        let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        if topic != symbol_short!("verrot") {
+            continue;
+        }
+        assert_eq!(topics.len(), 2);
+        let topic_old_verifier: Address = topics.get(1).unwrap().try_into_val(&env).unwrap();
+        let payload: VerifierRotation = data.try_into_val(&env).unwrap();
+        assert_eq!(topic_old_verifier, old_verifier);
+        assert_eq!(
+            payload,
+            VerifierRotation {
+                old_verifier: old_verifier.clone(),
+                new_verifier: new_verifier.clone(),
+                ledger,
+            }
+        );
+        found = true;
+    }
+    assert!(found, "rotate_verifier must emit a verrot event");
+}
+
+#[test]
+fn rotate_verifier_requires_admin_auth() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+    client.add_verifier(&old_verifier);
+
+    env.mock_auths(&[]);
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert!(result.is_err());
+
+    env.mock_all_auths();
+    assert!(client.is_verifier(&old_verifier));
+    assert!(!client.is_verifier(&new_verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_unregistered_old_verifier() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert_eq!(result, Err(Ok(Error::NotFound)));
+    assert!(!client.is_verifier(&old_verifier));
+    assert!(!client.is_verifier(&new_verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_same_key_without_state_change() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+
+    let result = client.try_rotate_verifier(&verifier, &verifier);
+    assert_eq!(result, Err(Ok(Error::AlreadyRegistered)));
+    assert!(client.is_verifier(&verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_registered_new_key_without_state_change() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+    client.add_verifier(&old_verifier);
+    client.add_verifier(&new_verifier);
+
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert_eq!(result, Err(Ok(Error::AlreadyRegistered)));
+    assert!(client.is_verifier(&old_verifier));
+    assert!(client.is_verifier(&new_verifier));
 }
 
 // ─── On-chain verification status mirror (#436) ────────────────────────────
@@ -6761,6 +7090,123 @@ fn settle_payment_emits_settle_event() {
     assert_eq!(decoded.state, PaymentState::Settled);
 }
 
+#[test]
+fn record_payment_settle_payment_anchor_end_to_end() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let resource_id = String::from_str(&env, "x402e2e");
+    let receipt_id = String::from_str(&env, "x402-receipt-001");
+    let tx_hash = String::from_str(&env, "sha256:x402-transaction-001");
+    let receipt_hash = String::from_str(&env, "sha256:x402-anchor-001");
+    let amount = 100i128;
+
+    client.add_settler(&settler);
+    client.add_verifier(&verifier);
+    assert!(client.is_settler(&settler));
+    assert!(client.is_verifier(&verifier));
+
+    client.register(
+        &creator,
+        &resource_id,
+        &amount,
+        &String::from_str(&env, "ipfs://x402e2e"),
+        &empty_tags(&env),
+    );
+
+    env.ledger().set_sequence_number(700);
+    client.record_payment(
+        &settler,
+        &receipt_id,
+        &resource_id,
+        &payer,
+        &amount,
+        &tx_hash,
+    );
+    let expected_recorded = PaymentReceipt {
+        receipt_id: receipt_id.clone(),
+        resource_id: resource_id.clone(),
+        payer: payer.clone(),
+        amount,
+        state: PaymentState::Escrowed,
+        tx_hash: tx_hash.clone(),
+        recorded_at: 700,
+        ledger: 700,
+    };
+
+    let payment_events = env.events().all();
+    assert_eq!(payment_events.len(), 1);
+    let (payment_contract, payment_topics, payment_data) = payment_events.get(0).unwrap();
+    assert_eq!(payment_contract, client.address);
+    assert_eq!(payment_topics.len(), 2);
+    let payment_symbol: Symbol =
+        Symbol::try_from_val(&env, &payment_topics.get(0).unwrap()).unwrap();
+    assert_eq!(payment_symbol, symbol_short!("payment"));
+    let payment_topic_id: String =
+        String::try_from_val(&env, &payment_topics.get(1).unwrap()).unwrap();
+    assert_eq!(payment_topic_id, receipt_id);
+    let payment_event: PaymentReceipt = PaymentReceipt::try_from_val(&env, &payment_data).unwrap();
+    assert_eq!(payment_event, expected_recorded);
+    assert_eq!(client.get_payment(&receipt_id), expected_recorded);
+    assert_eq!(
+        client.get_payment_receipt(&resource_id, &payer),
+        expected_recorded
+    );
+
+    env.ledger().set_sequence_number(701);
+    client.settle_payment(&settler, &receipt_id);
+    let expected_settled = PaymentReceipt {
+        state: PaymentState::Settled,
+        ..expected_recorded.clone()
+    };
+
+    let settle_events = env.events().all();
+    assert_eq!(settle_events.len(), 1);
+    let (settle_contract, settle_topics, settle_data) = settle_events.get(0).unwrap();
+    assert_eq!(settle_contract, client.address);
+    assert_eq!(settle_topics.len(), 2);
+    let settle_symbol: Symbol = Symbol::try_from_val(&env, &settle_topics.get(0).unwrap()).unwrap();
+    assert_eq!(settle_symbol, symbol_short!("settle"));
+    let settle_topic_id: String =
+        String::try_from_val(&env, &settle_topics.get(1).unwrap()).unwrap();
+    assert_eq!(settle_topic_id, receipt_id);
+    let settle_event: PaymentReceipt = PaymentReceipt::try_from_val(&env, &settle_data).unwrap();
+    assert_eq!(settle_event, expected_settled);
+    assert_eq!(client.get_payment(&receipt_id), expected_settled);
+    assert_eq!(
+        client.get_payment_receipt(&resource_id, &payer),
+        expected_settled
+    );
+
+    env.ledger().set_sequence_number(702);
+    client.anchor_purchase_receipt(&verifier, &resource_id, &payer, &receipt_hash);
+    let expected_anchor = PurchaseReceiptAnchor {
+        resource_id: resource_id.clone(),
+        buyer: payer.clone(),
+        receipt_hash: receipt_hash.clone(),
+        ledger: 702,
+    };
+
+    let anchor_events = env.events().all();
+    assert_eq!(anchor_events.len(), 1);
+    let (anchor_contract, anchor_topics, anchor_data) = anchor_events.get(0).unwrap();
+    assert_eq!(anchor_contract, client.address);
+    assert_eq!(anchor_topics.len(), 2);
+    let anchor_symbol: Symbol = Symbol::try_from_val(&env, &anchor_topics.get(0).unwrap()).unwrap();
+    assert_eq!(anchor_symbol, symbol_short!("anchor"));
+    let anchor_topic_id: String =
+        String::try_from_val(&env, &anchor_topics.get(1).unwrap()).unwrap();
+    assert_eq!(anchor_topic_id, resource_id);
+    let anchor_event: PurchaseReceiptAnchor =
+        PurchaseReceiptAnchor::try_from_val(&env, &anchor_data).unwrap();
+    assert_eq!(anchor_event, expected_anchor);
+    assert_eq!(
+        client.get_purchase_receipt(&resource_id, &payer),
+        expected_anchor
+    );
+}
+
 /// Failed record_payment calls leave no receipt behind.
 #[test]
 fn failed_record_payment_does_not_store_receipt() {
@@ -8282,7 +8728,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 26] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -8323,6 +8769,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 25] {
         (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
         (DataKey::AttestationHash(id), "AttestationHash", 2),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
+        (DataKey::FeeDestination, "FeeDestination", 1),
     ]
 }
 
@@ -8364,7 +8811,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        25,
+        26,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -8395,6 +8842,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::PaymentTxHash(_) => "PaymentTxHash",
             DataKey::AttestationHash(_) => "AttestationHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
+            DataKey::FeeDestination => "FeeDestination",
         };
         assert_eq!(
             matched, *name,
