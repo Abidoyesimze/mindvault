@@ -31,6 +31,7 @@ import { STATE_VERSION, type ProfileState, type WalletProfile } from "./profiles
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
+const BACKUP_DIR = join(STATE_DIR, "backups");
 
 // scrypt cost params — tuned for interactive passphrase derivation (not hot path).
 // N=2^14 keeps OpenSSL maxmem happy in constrained CI/agent envs.
@@ -126,6 +127,18 @@ export function exportState(passphrase: string): string {
   const tag = cipher.getAuthTag();
   const blob = Buffer.concat([ciphertext, tag]);
   return `v1:${salt.toString("base64")}:${nonce.toString("base64")}:${blob.toString("base64")}`;
+}
+
+/** Encrypt the current state and write a private recovery file. */
+export function exportStateFile(
+  passphrase: string,
+  now: Date = new Date(),
+  directory: string = BACKUP_DIR,
+): string {
+  const stamp = now.toISOString().replace(/[:.]/g, "-");
+  const path = join(directory, `state-${stamp}.backup`);
+  writeAtomically(path, `${exportState(passphrase)}\n`, 0o600);
+  return path;
 }
 
 /**
@@ -231,6 +244,7 @@ function normalizePersisted(raw: unknown): ProfileState {
       }
     }
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
+    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
     profiles[name] = profile;
   }
   const requested = typeof obj.activeProfile === "string" ? obj.activeProfile : "default";

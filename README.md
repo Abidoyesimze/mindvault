@@ -132,6 +132,8 @@ Long-running tools stream MCP `notifications/progress` updates when the client s
 
 Every outbound call runs under a configurable `AbortController` deadline, so a hung backend fails fast instead of blocking the agent. Idempotent reads additionally retry transient failures with bounded, jittered backoff — payments never do, since a replay could settle twice. See **[docs/mcp-timeouts-retries.md](docs/mcp-timeouts-retries.md)**.
 
+USDC amounts arrive in two encodings — Horizon decimals and Soroban stroops, a factor of 10⁷ apart — so every conversion runs through one tagged boundary that a balance cannot cross without declaring its unit. See **[docs/mcp-usdc-units.md](docs/mcp-usdc-units.md)**.
+
 ## Project Structure
 
 ```

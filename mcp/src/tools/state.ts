@@ -14,19 +14,26 @@ import {
 import { DEFAULT_PROFILE, isValidProfileName } from "../profiles.js";
 import {
   checkStatePermissions,
-  exportState,
+  exportStateFile,
   restoreState as restoreStateFromBackup,
 } from "../stateBackup.js";
 import { formatResetPreview, isResetConfirmed } from "../resetGuard.js";
 
-export function backupState(passphrase: string): string {
-  const blob = exportState(passphrase);
+export function backupState(passphrase: string, confirm: unknown = false): string {
+  if (!isResetConfirmed(confirm)) {
+    return [
+      "Backup NOT performed — confirmation required.",
+      "This will export every wallet secret key and publisher API key in encrypted form.",
+      "Keep the passphrase separate from the backup file.",
+      "To proceed, call mindvault_backup_state again with confirm: true.",
+    ].join("\n");
+  }
+  const path = exportStateFile(passphrase);
   return [
-    "Encrypted state backup ready. Copy the blob below to the new environment.",
-    "Restore with mindvault_restore_state using the same passphrase.",
-    "The blob does not contain plaintext secrets.",
-    "",
-    blob,
+    "Encrypted state backup written.",
+    `File: ${path}`,
+    "The file is mode 0600 and contains no plaintext secrets.",
+    "Restore it with mindvault_restore_state using the file contents as blob and the same passphrase.",
   ].join("\n");
 }
 

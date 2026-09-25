@@ -88,3 +88,27 @@ describe("catalogCacheLabel (#556)", () => {
     expect(label).not.toContain("stale");
   });
 });
+
+describe("catalogCacheLabel reasons (#837)", () => {
+  const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+
+  it("defaults to unreachable when no reason is given", () => {
+    expect(catalogCacheLabel(now - 60_000, now)).toContain("catalog API unreachable");
+  });
+
+  it("names the status when the catalog answered but could not serve", () => {
+    const label = catalogCacheLabel(now - 60_000, now, { kind: "status", status: 503 });
+    expect(label).toContain("catalog API returned HTTP 503");
+    expect(label).not.toContain("unreachable");
+  });
+
+  it("keeps the staleness warning alongside the reason", () => {
+    const label = catalogCacheLabel(now - CATALOG_CACHE_STALE_AFTER_MS - 60_000, now, {
+      kind: "status",
+      status: 502,
+    });
+    expect(label).toContain("HTTP 502");
+    expect(label).toContain("stale");
+    expect(label).toContain("mindvault_registry_lookup");
+  });
+});
