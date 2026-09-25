@@ -216,6 +216,11 @@ stellar contract invoke \
   --id $CONTRACT --rpc-url $RPC --network-passphrase "Test SDF Network ; September 2015" \
   -- get_owner --id swcn98besxpp6t1u8e77fqz3
 
+# Fetch several owner addresses in one call
+stellar contract invoke \
+  --id $CONTRACT --rpc-url $RPC --network-passphrase "Test SDF Network ; September 2015" \
+  -- get_owner_many --ids '["swcn98besxpp6t1u8e77fqz3","anotherresource"]'
+
 # Registry discovery metadata (name, version, network id)
 stellar contract invoke \
   --id $CONTRACT --rpc-url $RPC --network-passphrase "Test SDF Network ; September 2015" \
@@ -473,6 +478,12 @@ if (ownerTx.result.isOk()) {
   console.log("Owner:", ownerTx.result.unwrap());
 }
 
+// Batch owners for multi-select validation
+const ownersTx = await registry.get_owner_many({
+  ids: ["swcn98besxpp6t1u8e77fqz3", "anotherresource"],
+});
+const owners = ownersTx.result; // Array<string | null>
+
 // Registry identity and capabilities
 const infoTx = await registry.registry_info();
 const info = infoTx.result;
@@ -705,8 +716,13 @@ client.add_verifier(&verifier);
 assert!(client.is_verifier(verifier.clone()));
 
 // Set on-chain verification status (verifier only)
-// Valid transitions: Pending→Verified, Pending→Rejected, Verified→Rejected, Rejected→Verified
-client.set_verification_status(&id, &verifier, &VerificationStatus::Verified);
+// Valid transitions: Pending->Verified, Pending->Rejected, Verified->Rejected, Rejected->Verified
+client.set_verification_status(
+    &id,
+    &verifier,
+    &VerificationStatus::Verified,
+    &Some(String::from_str(&env, "sha256:abcdef01")),
+);
 
 let resource = client.get(&id);
 assert_eq!(resource.verified, VerificationStatus::Verified);

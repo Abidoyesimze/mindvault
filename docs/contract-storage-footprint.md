@@ -8,6 +8,8 @@ measured it.
 
 This report is generated and enforced by the `storage_footprint_report` test in
 [`contract/contracts/vault-registry/src/test.rs`](../contract/contracts/vault-registry/src/test.rs).
+Contract CI runs the same report explicitly through `make footprint`, so
+storage growth fails unless the budget and this report are updated together.
 
 ## Running it
 
@@ -47,6 +49,7 @@ baseline for comparing one revision of the contract against another.
 | PaymentIndex -> receipt id | persistent | 104 |    72 |   176 |    240 |
 | PurchaseReceipt (anchor)   | persistent | 108 |   300 |   408 |    480 |
 | FlagReasonHash             | persistent |  68 |    72 |   140 |    200 |
+| AttestationHash            | persistent |  56 |    80 |   136 |    160 |
 | FeeConfig                  | instance   |  32 |   136 |   168 |    192 |
 | FeeDestination             | instance   |  36 |    76 |   112 |    192 |
 | Admin                      | instance   |  28 |    40 |    68 |     80 |

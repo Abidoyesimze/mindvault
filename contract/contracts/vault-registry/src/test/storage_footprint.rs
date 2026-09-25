@@ -131,6 +131,15 @@ fn storage_footprint_report() {
         &max_hash,
     );
     client.anchor_purchase_receipt(&verifier, &max_id, &buyer, &max_hash);
+    client.set_verification_status(
+        &typical_id,
+        &verifier,
+        &VerificationStatus::Verified,
+        &Some(String::from_str(
+            &env,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )),
+    );
     client.flag_resource(&max_id, &moderator, &FlagReason::Copyright);
     client.set_flag_reason_hash(
         &max_id,
@@ -206,6 +215,12 @@ fn storage_footprint_report() {
             DataKey::FlagReasonHash(max_id.clone()),
             StorageKind::Persistent,
             200,
+        ),
+        (
+            "AttestationHash",
+            DataKey::AttestationHash(typical_id.clone()),
+            StorageKind::Persistent,
+            160,
         ),
         ("FeeConfig", DataKey::FeeConfig, StorageKind::Instance, 192),
         (
