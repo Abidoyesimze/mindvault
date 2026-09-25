@@ -193,6 +193,10 @@ const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
 export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
   "mindvault_publish_status",
   "mindvault_purchase_history",
+  // items is an array of objects — the generic validator handles only flat
+  // string/flag/hash/integer/enum/tag_array fields. Argument shape is enforced
+  // by the input schema in tools.ts and validated inline in the dispatch handler.
+  "mindvault_publish_batch",
 ];
 
 /**
@@ -203,6 +207,10 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_setup_wallet: { profile: PROFILE_NAME, confirmMainnet: CONFIRM_MAINNET },
   mindvault_wallet_info: {},
   mindvault_use_profile: { name: { ...PROFILE_NAME, required: true } },
+  mindvault_switch_network_profile: {
+    name: { ...PROFILE_NAME, required: true },
+    network: { kind: "enum", values: ["testnet", "mainnet"], required: true },
+  },
   mindvault_list_profiles: {},
   mindvault_browse: { ...CATALOG_FILTER_ARGS },
   mindvault_search: { ...CATALOG_FILTER_ARGS },
@@ -272,6 +280,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     start: { kind: "integer", min: 0 },
     limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
   },
+  mindvault_registry_count: {
+    creator: { kind: "string" },
+  },
   mindvault_tx_status: { txHash: { kind: "hash", required: true, bareHex: true } },
   // `confirm` is what resetGuard.isResetConfirmed reads. It was advertised in
   // ListTools and absent here, so every confirmed reset failed validation as an
@@ -281,7 +292,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     all: { kind: "flag" },
     confirmMainnet: CONFIRM_MAINNET,
   },
-  mindvault_backup_state: { passphrase: PASSPHRASE },
+  mindvault_backup_state: { passphrase: PASSPHRASE, confirm: { kind: "flag" } },
+  mindvault_resource_provenance: { resourceId: RESOURCE_ID },
+  mindvault_resource_change_log: { resourceId: RESOURCE_ID },
   mindvault_restore_state: {
     blob: { kind: "string", required: true, maxLength: 1_048_576 },
     passphrase: PASSPHRASE,

@@ -19,6 +19,7 @@ export interface AgentWallet {
 export interface WalletProfile {
   wallet?: AgentWallet;
   apiKey?: string;
+  network?: "testnet" | "mainnet";
 }
 
 /** On-disk / in-memory shape for the current (v1) state format. */
@@ -77,6 +78,7 @@ export function normalizeProfiles(raw: unknown): Record<string, WalletProfile> {
     const profile: WalletProfile = {};
     if (isValidWallet(v.wallet)) profile.wallet = v.wallet;
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
+    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
     out[name] = profile;
   }
   return out;
