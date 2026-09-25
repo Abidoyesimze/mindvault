@@ -33,12 +33,19 @@ import { safeErrorMessage } from "../redaction.js";
 import { recordPurchase } from "../purchaseHistory.js";
 import { mockSetListed, mockSetPrice, mockTransferOwnership, mockUpdateMetadata, mockPublishBatch } from "../mock.js";
 
+/**
+ * Decimal USDC as on-chain stroops, throwing on an amount the shared converter
+ * will not accept — a price that cannot be expressed exactly must not be
+ * rounded into a transaction (#838).
+ */
 export function usdcToStroops(usdc: string): bigint {
-  const parts = usdc.split(".");
-  const whole = BigInt(parts[0] || "0");
-  const fracStr = (parts[1] || "").padEnd(7, "0").slice(0, 7);
-  const frac = BigInt(fracStr);
-  return whole * 10_000_000n + frac;
+  const stroops = toStroops(usdc);
+  if (stroops === null) {
+    throw new Error(
+      `Invalid USDC amount "${usdc}". Use a non-negative decimal with at most 7 decimal places, e.g. "5.00".`,
+    );
+  }
+  return stroops;
 }
 
 export async function register(

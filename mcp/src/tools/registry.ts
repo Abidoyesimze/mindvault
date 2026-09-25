@@ -28,6 +28,7 @@ import { parseMetadataHash } from "../metadataHash.js";
 import { mainnetAllowedFromEnv, formatMainnetDiagnostics } from "../mainnetGuardrails.js";
 import { mockRegistryCount, mockRegistryList, mockRegistryLookup } from "../mock.js";
 import { type AgentWallet } from "../profiles.js";
+import { stroopsToUsdc } from "../usdcAmount.js";
 
 export interface BalanceDetails {
   status: "missing" | "no-trustline" | "zero" | "funded";
@@ -187,15 +188,6 @@ export async function insufficientFundsMessage(
     `Shortfall: ${shortfall.toFixed(7).replace(/\.?0+$/, "")} USDC`,
     `Fund ${wallet.publicKey} with the shortfall and retry.`,
   ].join("\n");
-}
-
-function stroopsToUsdc(stroops: bigint): string {
-  const STROOPS_PER_USDC = 10_000_000n;
-  const negative = stroops < 0n;
-  const abs = negative ? -stroops : stroops;
-  const whole = abs / STROOPS_PER_USDC;
-  const frac = abs % STROOPS_PER_USDC;
-  return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(7, "0")}`;
 }
 
 export async function registryLookup(resourceId: string): Promise<string> {

@@ -179,18 +179,40 @@ function describeAge(ms: number): string {
 }
 
 /**
- * Agent-facing label describing the served snapshot and its age. "Fresh"
- * snapshots are served normally; "stale" ones carry a warning to re-check
- * on-chain when freshness matters, mirroring the cacheStaleness guidance.
+ * Why the live catalog could not be read, so the snapshot label can say so.
+ *
+ * "Unreachable" and "the API answered HTTP 503" are different facts, and an
+ * operator reading a tool transcript needs the real one: the first points at
+ * the network, the second at the service. The label used to assert the first
+ * for both (#837).
  */
-export function catalogCacheLabel(savedAtMs: number, nowMs: number = Date.now()): string {
+export type CatalogFallbackReason = { kind: "unreachable" } | { kind: "status"; status: number };
+
+/** Render the cause clause used in the snapshot label. */
+function describeReason(reason: CatalogFallbackReason | undefined): string {
+  if (reason?.kind === "status") return `catalog API returned HTTP ${reason.status}`;
+  return "catalog API unreachable";
+}
+
+/**
+ * Agent-facing label describing the served snapshot, its age, and why the live
+ * read failed. "Fresh" snapshots are served normally; "stale" ones carry a
+ * warning to re-check on-chain when freshness matters, mirroring the
+ * cacheStaleness guidance.
+ */
+export function catalogCacheLabel(
+  savedAtMs: number,
+  nowMs: number = Date.now(),
+  reason?: CatalogFallbackReason,
+): string {
   const ageMs = Math.max(0, nowMs - savedAtMs);
   const age = describeAge(ageMs);
   if (ageMs <= config.ttlMs) {
-    return `Offline catalog snapshot served (cached ${age} ago) — catalog API unreachable.`;
+    return `Offline catalog snapshot served (cached ${age} ago) — ${describeReason(reason)}.`;
   }
   return (
-    `⚠ Offline catalog snapshot served (cached ${age} ago) — stale; results may be outdated. ` +
+    `⚠ Offline catalog snapshot served (cached ${age} ago) — ${describeReason(reason)}; ` +
+    `stale, results may be outdated. ` +
     `Confirm a specific resource on-chain with mindvault_registry_lookup when freshness matters.`
   );
 }
