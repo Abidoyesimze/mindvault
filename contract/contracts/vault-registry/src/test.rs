@@ -7423,6 +7423,99 @@ fn set_paused_noop_still_emits_event() {
     );
 }
 
+#[test]
+fn set_paused_until_at_or_before_now_resumes_immediately() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    env.ledger().set_timestamp(100);
+
+    client.set_paused_until(&admin, &100);
+    assert!(!client.is_paused());
+    assert_eq!(client.pause_until(), None);
+
+    client.set_paused_until(&admin, &99);
+    assert!(!client.is_paused());
+    assert_eq!(client.pause_until(), None);
+}
+
+#[test]
+fn scheduled_pause_blocks_until_deadline_then_auto_resumes() {
+    let (env, creator, admin, client) = setup_with_admin();
+    env.ledger().set_timestamp(100);
+    client.set_paused_until(&admin, &200);
+
+    assert!(client.is_paused());
+    assert_eq!(client.pause_until(), Some(200));
+    assert_eq!(
+        client.try_register(
+            &creator,
+            &String::from_str(&env, "scheduledpause"),
+            &100i128,
+            &String::from_str(&env, "ipfs://m"),
+            &empty_tags(&env),
+        ),
+        Err(Ok(Error::ContractPaused))
+    );
+
+    env.ledger().set_timestamp(200);
+    assert!(!client.is_paused());
+    assert_eq!(client.pause_until(), None);
+    client.register(
+        &creator,
+        &String::from_str(&env, "scheduledpause"),
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+}
+
+#[test]
+fn explicit_unpause_clears_scheduled_deadline() {
+    let (env, creator, admin, client) = setup_with_admin();
+    env.ledger().set_timestamp(100);
+    client.set_paused_until(&admin, &200);
+    client.set_paused(&admin, &false);
+
+    assert!(!client.is_paused());
+    assert_eq!(client.pause_until(), None);
+    client.register(
+        &creator,
+        &String::from_str(&env, "clearpause"),
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+}
+
+#[test]
+fn indefinite_pause_clears_any_scheduled_deadline() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    env.ledger().set_timestamp(100);
+    client.set_paused_until(&admin, &200);
+    client.set_paused(&admin, &true);
+
+    assert!(client.is_paused());
+    assert_eq!(client.pause_until(), None);
+}
+
+#[test]
+fn set_paused_until_emits_deadline_event() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    env.ledger().set_timestamp(100);
+    client.set_paused_until(&admin, &200);
+
+    let all = env.events().all();
+    let (_, topics, data) = all.get_unchecked(all.len() - 1);
+    let topic: Symbol =
+        <Symbol as TryFromVal<Env, Val>>::try_from_val(&env, &topics.get(0).unwrap())
+            .ok()
+            .unwrap();
+    assert_eq!(topic, Symbol::new(&env, "pause_until"));
+    let (pause_until, emitted_admin): (u64, Address) =
+        <(u64, Address)>::try_from_val(&env, &data).unwrap();
+    assert_eq!(pause_until, 200);
+    assert_eq!(emitted_admin, admin);
+}
+
 // ── flag_resource ─────────────────────────────────────────────────────────
 
 #[test]
@@ -8775,6 +8868,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 26] {
         (DataKey::Moderator(who.clone()), "Moderator", 2),
         (DataKey::DisputeFlag(id.clone()), "DisputeFlag", 2),
         (DataKey::Paused, "Paused", 1),
+        (DataKey::PauseUntil, "PauseUntil", 1),
         (DataKey::Settler(who.clone()), "Settler", 2),
         (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
@@ -8853,6 +8947,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::Moderator(_) => "Moderator",
             DataKey::DisputeFlag(_) => "DisputeFlag",
             DataKey::Paused => "Paused",
+            DataKey::PauseUntil => "PauseUntil",
             DataKey::Settler(_) => "Settler",
             DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",

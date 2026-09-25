@@ -146,6 +146,8 @@ fn storage_footprint_report() {
         &moderator,
         &String::from_str(&env, &"f".repeat(MAX_FLAG_REASON_HASH_LEN as usize)),
     );
+    env.ledger().set_timestamp(100);
+    client.set_paused_until(&admin, &200);
 
     let max_tag = client.get(&max_id).tags.get(0).unwrap();
     let specs: std::vec::Vec<(&'static str, DataKey, StorageKind, usize)> = std::vec![
@@ -248,7 +250,13 @@ fn storage_footprint_report() {
             StorageKind::Instance,
             96,
         ),
-        ("Paused flag", DataKey::Paused, StorageKind::Instance, 32),
+        ("Paused flag", DataKey::Paused, StorageKind::Instance, 48),
+        (
+            "Pause deadline",
+            DataKey::PauseUntil,
+            StorageKind::Instance,
+            64,
+        ),
     ];
 
     let mut rows: std::vec::Vec<FootprintRow> = std::vec::Vec::new();
