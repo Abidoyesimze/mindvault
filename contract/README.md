@@ -229,7 +229,9 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `remove_settler(settler)`                                                    | `admin`                                                  | `settler: Address`                                                                                                                                                                                                                                   | `Result<(), Error>`                    | Revoke the settler role. Emits `rmsettlr`.                                                                                                                                                                                                                                                               |
 | `is_settler(address)`                                                        | —                                                        | `address: Address`                                                                                                                                                                                                                                   | `bool`                                 | Whether `address` currently holds the settler role.                                                                                                                                                                                                                                                      |
 | `set_paused(admin, paused)`                                                  | `admin`                                                  | `admin: Address`; `paused: bool`                                                                                                                                                                                                                     | `Result<(), Error>`                    | Set or clear the emergency pause on all mutations. Emits `pause`.                                                                                                                                                                                                                                        |
+| `set_paused_until(admin, pause_until)`                                      | `admin`                                                  | `admin: Address`; `pause_until: u64` — absolute Unix ledger timestamp in seconds                                                                                                                                                                    | `Result<(), Error>`                    | Schedule a pause that automatically resumes at the deadline. Emits `pause` and `pause_until`.                                                                                                                                                                                                            |
 | `is_paused()`                                                                | —                                                        | —                                                                                                                                                                                                                                                    | `bool`                                 | Whether the registry is currently paused.                                                                                                                                                                                                                                                                |
+| `pause_until()`                                                               | —                                                        | —                                                                                                                                                                                                                                                    | `Option<u64>`                          | The active scheduled pause deadline, if one exists.                                                                                                                                                                                                                                                      |
 | `initialize_network(network_id)`                                             | —                                                        | `network_id: BytesN<32>`                                                                                                                                                                                                                             | `Result<(), Error>`                    | Pin the contract to one network passphrase digest. One-shot.                                                                                                                                                                                                                                             |
 | `network_id()`                                                               | —                                                        | —                                                                                                                                                                                                                                                    | `Result<BytesN<32>, Error>`            | The configured network id. Errors `NetworkNotInitialized` if unset.                                                                                                                                                                                                                                      |
 
@@ -510,6 +512,7 @@ apart, so update all three together.
 | `addsettlr` | `true`                                                                                   | `add_settler()` succeeds                                   |
 | `rmsettlr`  | `false`                                                                                  | `remove_settler()` succeeds                                |
 | `pause`     | `(paused: bool, admin: Address)`                                                         | `set_paused()` succeeds (including no-op transitions)      |
+| `pause_until` | `(pause_until: u64, admin: Address)`                                                   | `set_paused_until()` succeeds                              |
 | `anchor`    | `PurchaseReceiptAnchor { resource_id, buyer, receipt_hash, ledger }`                     | `anchor_purchase_receipt()` succeeds                       |
 | `anchrfail` | `AnchorFailure { resource_id, buyer, receipt_hash, reason, ledger }`                     | `attempt_anchor_purchase_receipt()` rejects an anchor      |
 | `addmod`    | `true`                                                                                   | `add_moderator()` succeeds                                 |
@@ -730,20 +733,27 @@ a budget deliberately.
 ### Emergency pause
 
 The contract supports an admin-controlled emergency pause via `set_paused(admin, bool)`.
+`set_paused(admin, true)` creates an indefinite pause, while
+`set_paused_until(admin, pause_until)` schedules a pause until an absolute Unix
+ledger timestamp in seconds. A deadline at or before the current ledger timestamp
+resumes immediately; once the ledger reaches a future deadline, the registry
+automatically resumes without a separate transaction.
 
 When paused, every write method (`register`, `set_price`, `update_metadata`,
 `freeze_metadata`, `set_verification_status`, `set_tags`, `transfer_ownership`,
 `propose_transfer`, `accept_transfer`, `cancel_transfer`, `set_listed`, `delist`,
 `repair_index`, `set_terms_hash`, `record_payment`) returns `Error::ContractPaused`
-(code `26`) without modifying any state.
+(code `40`) without modifying any state.
 
 Read-only methods (`get`, `exists`, `list*`, `count`, `get_owner`, `registry_info`,
 `contract_version`, `get_terms_hash`, `get_payment_receipt`, `is_paused`,
 `is_verifier`, `admin`, `pending_admin`) remain available while paused.
 
-`is_paused()` returns the current pause state. `set_paused` emits a `pause` event
+`is_paused()` returns the current effective pause state, and `pause_until()` returns
+the active scheduled deadline when one exists. `set_paused` emits a `pause` event
 with data `(paused: bool, admin: Address)` on every call, including no-op
-transitions, so off-chain monitors can detect rapid pause/unpause cycles.
+transitions. `set_paused_until` additionally emits a `pause_until` event with
+data `(pause_until: u64, admin: Address)`.
 
 Only the current admin can call `set_paused`. Errors `AdminNotSet` if no admin
 has been set, or `Unauthorized` if the caller does not match the stored admin.

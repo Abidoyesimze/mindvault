@@ -14,7 +14,7 @@ extern crate alloc;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
-    IntoVal, String, Val, Vec,
+    IntoVal, String, Symbol, Val, Vec,
 };
 
 // ~5s ledgers → 17,280 per day. Persistent entries are bumped ~30 days on each
@@ -145,7 +145,9 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ),
     ("accept_admin", "pending admin"),
     ("set_paused", "admin"),
+    ("set_paused_until", "admin"),
     ("is_paused", "—"),
+    ("pause_until", "—"),
     // ── Settler role ──────────────────────────────────────────────────────
     ("add_settler", "admin"),
     ("remove_settler", "admin"),
@@ -293,6 +295,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("addsettlr", "true"),
     ("rmsettlr", "false"),
     ("pause", "(paused: bool, admin: Address)"),
+    ("pause_until", "(pause_until: u64, admin: Address)"),
     (
         "anchor",
         "PurchaseReceiptAnchor { resource_id, buyer, receipt_hash, ledger }",
@@ -542,6 +545,8 @@ pub enum DataKey {
     /// Emergency pause flag. When `true`, every state-changing method
     /// returns `ContractPaused`.
     Paused,
+    /// Unix timestamp at which a scheduled pause automatically expires.
+    PauseUntil,
     /// Settler role grant, authorizing `record_payment` / `settle_payment`.
     Settler(Address),
     /// Immutable purchase receipt anchor for `(resource_id, buyer)`.
@@ -1987,19 +1992,56 @@ impl VaultRegistry {
     pub fn set_paused(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
         env.storage().instance().set(&DataKey::Paused, &paused);
+        env.storage().instance().remove(&DataKey::PauseUntil);
         Self::bump_instance(&env);
         env.events()
             .publish((symbol_short!("pause"), admin.clone()), (paused, admin));
         Ok(())
     }
 
+    /// Schedule an emergency pause that automatically expires at `pause_until`.
+    ///
+    /// The deadline is an absolute Unix timestamp in seconds from the ledger
+    /// clock. The existing `set_paused(admin, true)` entry point remains the
+    /// way to create an indefinite pause. A deadline at or before the current
+    /// ledger timestamp takes effect as an immediate resume.
+    pub fn set_paused_until(
+        env: Env,
+        admin: Address,
+        pause_until: u64,
+    ) -> Result<(), Error> {
+        Self::require_current_admin(&env, &admin)?;
+        let active = pause_until > env.ledger().timestamp();
+        env.storage().instance().set(&DataKey::Paused, &active);
+        if active {
+            env.storage()
+                .instance()
+                .set(&DataKey::PauseUntil, &pause_until);
+        } else {
+            env.storage().instance().remove(&DataKey::PauseUntil);
+        }
+        Self::bump_instance(&env);
+        env.events()
+            .publish((symbol_short!("pause"), admin.clone()), (active, admin.clone()));
+        env.events().publish(
+            (Symbol::new(&env, "pause_until"), admin.clone()),
+            (pause_until, admin),
+        );
+        Ok(())
+    }
+
     /// Whether the registry is currently paused. Returns `false` when the
     /// pause flag has never been set. Never blocked by the pause itself.
     pub fn is_paused(env: Env) -> bool {
+        Self::pause_is_active(&env)
+    }
+
+    /// The active scheduled pause deadline, if one exists.
+    pub fn pause_until(env: Env) -> Option<u64> {
         env.storage()
             .instance()
-            .get::<DataKey, bool>(&DataKey::Paused)
-            .unwrap_or(false)
+            .get::<DataKey, u64>(&DataKey::PauseUntil)
+            .filter(|pause_until| *pause_until > env.ledger().timestamp())
     }
 
     /// Grant the verifier role to `verifier`, authorizing `set_verification_status`.
@@ -3128,16 +3170,31 @@ impl VaultRegistry {
     /// Every write method calls this at its entry point. Read-only methods
     /// never call it, so they remain available while the registry is paused.
     fn require_not_paused(env: &Env) -> Result<(), Error> {
-        if env
+        if Self::pause_is_active(env) {
+            Err(Error::ContractPaused)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Return whether the registry is paused after applying any scheduled
+    /// deadline. Expired deadlines are treated as resumed without requiring a
+    /// separate transaction to clear the stored state.
+    fn pause_is_active(env: &Env) -> bool {
+        if !env
             .storage()
             .instance()
             .get::<DataKey, bool>(&DataKey::Paused)
             .unwrap_or(false)
         {
-            Err(Error::ContractPaused)
-        } else {
-            Ok(())
+            return false;
         }
+
+        env.storage()
+            .instance()
+            .get::<DataKey, u64>(&DataKey::PauseUntil)
+            .map(|pause_until| pause_until > env.ledger().timestamp())
+            .unwrap_or(true)
     }
 
     /// Normalize a tag for storage and index keying: trim ASCII whitespace and
