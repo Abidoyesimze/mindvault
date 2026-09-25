@@ -787,6 +787,108 @@ fn set_price_emits_structured_event() {
 }
 
 #[test]
+fn set_price_many_updates_owned_resources() {
+    let (env, creator, client) = setup();
+    for id in ["manya", "manyb"] {
+        client.register(
+            &creator,
+            &String::from_str(&env, id),
+            &100i128,
+            &String::from_str(&env, "https://example.com/metadata"),
+            &empty_tags(&env),
+        );
+    }
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchPriceUpdate {
+        id: String::from_str(&env, "manya"),
+        new_price: 250i128,
+    });
+    updates.push_back(BatchPriceUpdate {
+        id: String::from_str(&env, "manyb"),
+        new_price: 350i128,
+    });
+
+    client.set_price_many(&creator, &updates);
+    assert_eq!(client.get(&String::from_str(&env, "manya")).price, 250i128);
+    assert_eq!(client.get(&String::from_str(&env, "manyb")).price, 350i128);
+}
+
+#[test]
+fn set_price_many_validates_before_writing_any_resource() {
+    let (env, creator, client) = setup();
+    for id in ["atomica", "atomicb"] {
+        client.register(
+            &creator,
+            &String::from_str(&env, id),
+            &100i128,
+            &String::from_str(&env, "https://example.com/metadata"),
+            &empty_tags(&env),
+        );
+    }
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchPriceUpdate {
+        id: String::from_str(&env, "atomica"),
+        new_price: 250i128,
+    });
+    updates.push_back(BatchPriceUpdate {
+        id: String::from_str(&env, "atomicb"),
+        new_price: 0i128,
+    });
+
+    assert_eq!(
+        client.try_set_price_many(&creator, &updates),
+        Err(Ok(Error::InvalidPrice))
+    );
+    assert_eq!(client.get(&String::from_str(&env, "atomica")).price, 100i128);
+    assert_eq!(client.get(&String::from_str(&env, "atomicb")).price, 100i128);
+}
+
+#[test]
+fn set_price_many_rejects_resources_owned_by_another_creator() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ownedcreator");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "https://example.com/metadata"),
+        &empty_tags(&env),
+    );
+
+    let stranger = Address::generate(&env);
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchPriceUpdate {
+        id: id.clone(),
+        new_price: 200i128,
+    });
+
+    assert_eq!(
+        client.try_set_price_many(&stranger, &updates),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(client.get(&id).price, 100i128);
+}
+
+#[test]
+fn set_price_many_rejects_oversized_batches() {
+    let (env, creator, client) = setup();
+    let mut updates = Vec::new(&env);
+    for i in 0..=MAX_BATCH_PRICE_UPDATES {
+        updates.push_back(BatchPriceUpdate {
+            id: String::from_str(&env, &format!("toomany{i}")),
+            new_price: 100i128,
+        });
+    }
+
+    assert_eq!(
+        client.try_set_price_many(&creator, &updates),
+        Err(Ok(Error::BatchTooLarge))
+    );
+}
+
+#[test]
 fn update_metadata_changes_pointer() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r2");

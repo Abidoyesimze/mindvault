@@ -52,6 +52,8 @@ pub const LIST_PAGE_CAP: u32 = 20;
 /// via `register_batch`. Keeps execution bounded and prevents transaction
 /// timeouts.
 pub const MAX_BATCH_REGISTER: u32 = 10;
+/// Maximum number of prices that can be updated in one `set_price_many` call.
+pub const MAX_BATCH_PRICE_UPDATES: u32 = 10;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -94,6 +96,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("register_with_memo", "creator"),
     ("register_batch", "creator"),
     ("set_price", "creator"),
+    ("set_price_many", "creator"),
     ("update_metadata", "creator"),
     ("freeze_metadata", "creator"),
     ("set_tags", "creator"),
@@ -505,6 +508,14 @@ pub struct BatchRegisterItem {
     pub metadata: String,
     pub tags: Vec<String>,
     pub content_hash: Option<String>,
+}
+
+/// Input for one item in a batch price update.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchPriceUpdate {
+    pub id: String,
+    pub new_price: i128,
 }
 
 /// Result of a batch registration attempt. Contains successfully registered
@@ -1030,6 +1041,65 @@ impl VaultRegistry {
                 updater,
             },
         );
+        Ok(())
+    }
+
+    /// Update prices for multiple resources owned by `creator` in one call.
+    /// The creator authorizes the invocation once, and every item is
+    /// validated before any price is written. If one item is invalid, no
+    /// prices are changed. Duplicate IDs use the last supplied price.
+    ///
+    /// The batch is capped at [`MAX_BATCH_PRICE_UPDATES`] items. A no-op price
+    /// update succeeds without writing storage or emitting `setprice`.
+    pub fn set_price_many(
+        env: Env,
+        creator: Address,
+        updates: Vec<BatchPriceUpdate>,
+    ) -> Result<(), Error> {
+        creator.require_auth();
+        Self::require_not_paused(&env)?;
+        if updates.len() > MAX_BATCH_PRICE_UPDATES {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut pending: alloc::vec::Vec<(String, Resource, i128)> = alloc::vec::Vec::new();
+        for i in 0..updates.len() {
+            let item = updates.get(i).unwrap();
+            Self::validate_resource_id(&item.id)?;
+            Self::validate_price(item.new_price)?;
+            let resource = Self::load(&env, &item.id)?;
+            if resource.creator != creator {
+                return Err(Error::Unauthorized);
+            }
+            Self::ensure_mutable(&resource)?;
+
+            if let Some(existing) = pending.iter_mut().find(|entry| entry.0 == item.id) {
+                existing.2 = item.new_price;
+            } else {
+                pending.push((item.id, resource, item.new_price));
+            }
+        }
+
+        for (id, mut resource, new_price) in pending {
+            if resource.price == new_price {
+                continue;
+            }
+
+            let old_price = resource.price;
+            let updater = resource.creator.clone();
+            resource.price = new_price;
+            Self::save(&env, &mut resource);
+            env.events().publish(
+                (symbol_short!("setprice"),),
+                PriceUpdated {
+                    id,
+                    old_price,
+                    new_price,
+                    updater,
+                },
+            );
+        }
+
         Ok(())
     }
 
