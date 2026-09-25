@@ -84,6 +84,7 @@ Available tools:
 | `mindvault_tx_status`          | Look up a Stellar transaction status by hash                               | `"Check tx a1b2c3d4..."`                                        |
 | `mindvault_reset`              | Clear the persisted wallet and publisher API key; needs confirm: true      | `"Reset my agent credentials"`                                  |
 | `mindvault_verify_install`     | Verify the MCP server install and configuration (local checks, no network) | `"Verify my install"`                                           |
+| `mindvault_debug_bundle`       | Export a sanitized debug bundle for bug reports (secrets removed, offline) | `"Export a debug bundle for this ticket"`                       |
 
 ### Install
 
@@ -101,14 +102,15 @@ Copy-ready configs for Claude Code, Claude Desktop, Codex, Cursor, VS Code, and 
 
 All env vars are optional — the defaults point to the hosted testnet backend:
 
-| Variable                     | Default                                                | Description                                        |
-| ---------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
-| `MINDVAULT_URL`              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                             |
-| `SPONSORED_ACCOUNT_URL`      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                  |
-| `VAULT_REGISTRY_CONTRACT_ID` | testnet contract ID                                    | On-chain vault-registry contract                   |
-| `HORIZON_URL`                | `https://horizon-testnet.stellar.org`                  | Stellar Horizon endpoint (for USDC balance checks) |
-| `SOROBAN_RPC_URL`            | `https://soroban-testnet.stellar.org`                  | Soroban RPC endpoint (for tx status and payments)  |
-| `MINDVAULT_METRICS`          | _(unset)_                                              | Opt-in tool-level metrics; set to `1` to enable    |
+| Variable                     | Default                                                | Description                                                           |
+| ---------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- |
+| `MINDVAULT_URL`              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                                                |
+| `SPONSORED_ACCOUNT_URL`      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                     |
+| `VAULT_REGISTRY_CONTRACT_ID` | testnet contract ID                                    | On-chain vault-registry contract                                      |
+| `HORIZON_URL`                | `https://horizon-testnet.stellar.org`                  | Stellar Horizon endpoint (for USDC balance checks)                    |
+| `SOROBAN_RPC_URL`            | `https://soroban-testnet.stellar.org`                  | Soroban RPC endpoint (for tx status and payments)                     |
+| `MINDVAULT_METRICS`          | _(unset)_                                              | Opt-in tool-level metrics; set to `1` to enable                       |
+| `MCP_LOG_LEVEL`              | `info`                                                 | Logging priority level threshold: `debug`, `info`, `warn`, or `error` |
 
 Every tool validates its arguments against an explicit schema before doing any work: unknown or malformed arguments are rejected with a deterministic error instead of reaching the API as a failed request. See **[docs/mcp-tool-arguments.md](docs/mcp-tool-arguments.md)** for the per-tool contract and error shape.
 
@@ -131,6 +133,8 @@ Tools with structured results (catalog, wallet, preview, buy, registry, receipts
 Long-running tools stream MCP `notifications/progress` updates when the client supplies a progress token — `mindvault_publish_status` with `wait: true` reports every poll while verification settles, so an agent sees movement instead of a hung call. See **[docs/mcp-progress-notifications.md](docs/mcp-progress-notifications.md)**.
 
 Every outbound call runs under a configurable `AbortController` deadline, so a hung backend fails fast instead of blocking the agent. Idempotent reads additionally retry transient failures with bounded, jittered backoff — payments never do, since a replay could settle twice. See **[docs/mcp-timeouts-retries.md](docs/mcp-timeouts-retries.md)**.
+
+USDC amounts arrive in two encodings — Horizon decimals and Soroban stroops, a factor of 10⁷ apart — so every conversion runs through one tagged boundary that a balance cannot cross without declaring its unit. See **[docs/mcp-usdc-units.md](docs/mcp-usdc-units.md)**.
 
 ## Project Structure
 

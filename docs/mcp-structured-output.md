@@ -49,7 +49,7 @@ verification rejected, missing tx hash), the text is unchanged and
 
 Text-only: `check_bindings`, `reset`, `backup_state`, `restore_state`,
 `verify_install`, `registry_health`, `check_state_permissions`, `register`,
-`rotate_publisher_key`. `mindvault_set_tags` has no handler.
+`rotate_publisher_key`, `mindvault_set_tags`.
 
 `mindvault_publish_status` and `mindvault_purchase_history` are advertised in
 ListTools with extra schemas (they are not in `TOOL_DEFINITIONS`).

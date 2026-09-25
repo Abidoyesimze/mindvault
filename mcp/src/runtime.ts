@@ -158,7 +158,10 @@ function resolveProfileName(name: unknown): string {
 }
 
 export function _setAgentWallet(w: AgentWallet | null): void {
-  if (w) activeProfile().wallet = w;
+  if (w) {
+    activeProfile().wallet = w;
+    activeProfile().network ??= NETWORK;
+  }
   else delete activeProfile().wallet;
 }
 export function _setAgentApiKey(k: string | null): void {

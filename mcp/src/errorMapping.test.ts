@@ -84,6 +84,25 @@ describe("isTimeoutError", () => {
 });
 
 describe("mapTransportError — network failure", () => {
+  it("keeps a Horizon HTTP 500 as an upstream server outage", () => {
+    const mapped = mapHttpError({
+      operation: "Horizon request failed",
+      source: "horizon",
+      status: 500,
+      data: { error: "Horizon unavailable" },
+    });
+    expect(mapped.category).toBe("server");
+    expect(formatMappedError(mapped)).toContain("Source: Horizon · Category: server · HTTP 500");
+  });
+
+  it("keeps a Soroban timeout as a timeout, not a network outage", () => {
+    const error = new Error("request timed out");
+    error.name = "TimeoutError";
+    const mapped = mapTransportError({ operation: "RPC failed", source: "soroban", error });
+    expect(mapped.category).toBe("timeout");
+    expect(formatMappedError(mapped)).toContain("Source: Soroban RPC · Category: timeout");
+  });
+
   it("classifies an unreachable service as a network error", () => {
     const mapped = mapTransportError({
       operation: "MindVault API request failed",

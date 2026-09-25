@@ -55,6 +55,7 @@ describe("MCP integration harness", () => {
     expect(names).toContain("mindvault_registry_info");
     expect(names).toContain("mindvault_registry_lookup");
     expect(names).toContain("mindvault_registry_list");
+    expect(names).toContain("mindvault_registry_count");
     expect(names).toContain("mindvault_setup_wallet");
     expect(names.length).toBeGreaterThanOrEqual(15);
 
@@ -174,45 +175,27 @@ describe("MCP integration harness", () => {
     expect(harnessResultText(empty)).toMatch(/No on-chain resources in range/);
   });
 
-  it("calls mindvault_prewarm_catalog with mocked catalog fixtures", async () => {
-    const result = await harness.callTool("mindvault_prewarm_catalog");
+  it("calls mindvault_registry_count and returns global counts", async () => {
+    const result = await harness.callTool("mindvault_registry_count", {});
     expect(harnessIsToolError(result)).toBe(false);
-    expect(harnessResultText(result)).toContain("Catalog pre-warmed");
+    const text = harnessResultText(result);
+    const data = JSON.parse(text);
+    expect(data.source).toBe("on-chain (mock)");
+    // MOCK_REGISTRY_RESOURCES has 2 entries, both listed
+    expect(data.count).toBe(2);
+    expect(data.listedCount).toBe(2);
+    expect(data.creatorCount).toBeUndefined();
+    expect(data.creator).toBeUndefined();
   });
 
-  it("calls mindvault_client_config for a specific client and for every client", async () => {
-    const cursor = await harness.callTool("mindvault_client_config", { client: "cursor" });
-    expect(harnessIsToolError(cursor)).toBe(false);
-    const cursorText = harnessResultText(cursor);
-    expect(cursorText).toContain("## Cursor");
-    expect(cursorText).toContain('"mcpServers"');
-    expect(cursorText).not.toContain("## VS Code");
-
-    const vscode = await harness.callTool("mindvault_client_config", { client: "vscode" });
-    expect(harnessResultText(vscode)).toContain('"servers"');
-
-    const codex = await harness.callTool("mindvault_client_config", { client: "codex" });
-    expect(harnessResultText(codex)).toContain("[mcp_servers.mindvault]");
-
-    const all = await harness.callTool("mindvault_client_config");
-    expect(harnessIsToolError(all)).toBe(false);
-    const allText = harnessResultText(all);
-    for (const heading of [
-      "## Claude Code",
-      "## Claude Desktop",
-      "## Codex",
-      "## Cursor",
-      "## VS Code",
-      "## Windsurf",
-    ]) {
-      expect(allText).toContain(heading);
-    }
-  });
-
-  it("calls mindvault_mainnet_banner and reflects the configured network", async () => {
-    const result = await harness.callTool("mindvault_mainnet_banner");
+  it("calls mindvault_registry_count with a creator and returns creatorCount", async () => {
+    const result = await harness.callTool("mindvault_registry_count", {
+      creator: "GMOCKCREATOR1",
+    });
     expect(harnessIsToolError(result)).toBe(false);
-    expect(harnessResultText(result)).toContain("testnet");
+    const data = JSON.parse(harnessResultText(result));
+    expect(data.creator).toBe("GMOCKCREATOR1");
+    expect(typeof data.creatorCount).toBe("number");
   });
 
   it("calls mindvault_recover_catalog_cache and returns guidance", async () => {
@@ -253,6 +236,26 @@ describe("MCP integration harness", () => {
     expect(parsed.currency).toBe("USDC");
     expect(typeof parsed.csv).toBe("string");
     expect(parsed.csv.split("\r\n")[0]).toContain("resourceId,title,amount");
+    expect(harnessStructuredContent(result)).toEqual(parsed);
+  });
+
+  it("exports a sanitized debug bundle with an advertised schema (#675)", async () => {
+    const { tools } = await harness.listTools();
+    const bundleTool = tools.find((t) => t.name === "mindvault_debug_bundle");
+    expect(bundleTool).toBeDefined();
+    expect((bundleTool as { outputSchema?: unknown }).outputSchema).toBeDefined();
+
+    const result = await harness.callTool("mindvault_debug_bundle", { auditLogLines: 5 });
+    expect(harnessIsToolError(result)).toBe(false);
+    const text = harnessResultText(result);
+    const parsed = JSON.parse(text);
+    expect(parsed.schema).toBe("mindvault.debug-bundle/v1");
+    expect(parsed.runtime.mockMode).toBe(true);
+    expect(parsed.config.stellarNetwork).toBe("testnet");
+    expect(parsed.auditLog.requested).toBe(5);
+    expect(Array.isArray(parsed.sanitized.rules)).toBe(true);
+    // Nothing shaped like a Stellar secret key, whatever the server had loaded.
+    expect(text).not.toMatch(/S[A-Z2-7]{55}/);
     expect(harnessStructuredContent(result)).toEqual(parsed);
   });
 
