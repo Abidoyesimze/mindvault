@@ -29,6 +29,15 @@ When the on-chain settlement succeeds but the receipt write fails:
 - clients should treat the missing receipt as a recoverable condition and may
   retry the receipt write.
 
+## Smoke tests
+
+The smoke and install-smoke tests must not bind to a fixed mock catalog id.
+Fixture ids change whenever a fixture is added or a resource is migrated, which
+would fail the smoke for reasons unrelated to the server. Instead, the smoke
+resolves the catalog id dynamically from the current fixtures (for example by
+reading the id from the loaded mock catalog rather than hard-coding it), so the
+tests keep passing as fixtures evolve.
+
 ## Development
 
 See the repository root for build and test instructions.
