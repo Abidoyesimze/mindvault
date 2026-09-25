@@ -25,10 +25,12 @@ import {
   ONCHAIN_MUTATION_OUTPUT_SCHEMA,
   PREVIEW_OUTPUT_SCHEMA,
   PUBLISH_BUY_OUTPUT_SCHEMA,
+  PUBLISH_BATCH_OUTPUT_SCHEMA,
   PUBLISH_STATUS_OUTPUT_SCHEMA,
   PURCHASE_HISTORY_OUTPUT_SCHEMA,
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
+  REGISTRY_COUNT_OUTPUT_SCHEMA,
   REGISTRY_INFO_OUTPUT_SCHEMA,
   REGISTRY_LIST_OUTPUT_SCHEMA,
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
@@ -608,6 +610,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_registry_count",
+    description:
+      "Return on-chain resource counts directly from the vault-registry contract: total registered resources (count), currently listed resources (listed_count), and optionally how many resources a specific creator currently owns (creator_resource_count). Use this to get a quick summary of registry size without paging through all entries.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creator: {
+          type: "string",
+          description:
+            "Optional Stellar public key (G…). When supplied, also returns the number of resources currently owned by that address (creator_resource_count). Omit to return only the global counts.",
+          examples: ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"],
+        },
+      },
+      required: [],
+    },
+    outputSchema: REGISTRY_COUNT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Count",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_tx_status",
     description:
       "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger number, close time, application order, and XDR envelopes. Useful for debugging on-chain registration failures.",
@@ -1146,6 +1172,62 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_publish_batch",
+    description:
+      "Publish up to 10 link resources in a single batch. Each resource is created and verified via x402 payment individually (the agent wallet pays the verification fee per item), then all verified resources are registered on-chain in one `register_batch` Soroban transaction — a single wallet approval covers the entire batch. Returns a summary with per-item verification status, on-chain status, and the batch transaction hash.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          description:
+            "List of resources to publish (1–10 items). Each item must include title, price, and externalUrl.",
+          items: {
+            type: "object",
+            properties: {
+              title: {
+                type: "string",
+                description: "Resource title (1–256 characters).",
+                examples: ["My Dataset", "Research Paper #1"],
+              },
+              description: {
+                type: "string",
+                description: "Optional description (max 2048 characters).",
+              },
+              price: {
+                type: "string",
+                description: "Price in USDC as a decimal string, e.g. '5.00'.",
+                examples: ["1.00", "5.00", "10.00"],
+              },
+              externalUrl: {
+                type: "string",
+                description: "Public http(s) URL buyers receive after payment.",
+                examples: ["https://example.com/data.json"],
+              },
+            },
+            required: ["title", "price", "externalUrl"],
+          },
+          minItems: 1,
+          maxItems: 10,
+        },
+        confirmMainnet: {
+          type: "boolean",
+          description:
+            "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+        },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
+      },
+      required: ["items"],
+    },
+    outputSchema: PUBLISH_BATCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Publish Batch",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
 ];

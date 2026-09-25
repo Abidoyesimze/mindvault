@@ -4080,8 +4080,11 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
 
     // Verifier role, verification mirror, freeze, and index repair.
+    let old_verifier = Address::generate(&env);
     let verifier = Address::generate(&env);
-    client.add_verifier(&verifier); // -> "addverif"
+    client.add_verifier(&old_verifier); // -> "addverif"
+    record(&env, &client, &mut observed);
+    client.rotate_verifier(&old_verifier, &verifier); // -> "rmverif", "addverif", "verrot"
     record(&env, &client, &mut observed);
     client.set_verification_status(&r2, &verifier, &VerificationStatus::Verified, &None); // -> "verify"
     record(&env, &client, &mut observed);
@@ -4582,6 +4585,100 @@ fn remove_verifier_revokes_verification_ability() {
     // Removed verifier cannot set verification status
     let res = client.try_set_verification_status(&id2, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::NotVerifier)));
+}
+
+#[test]
+fn admin_can_rotate_verifier_with_audit_event() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+
+    client.add_verifier(&old_verifier);
+    let ledger = env.ledger().sequence();
+    client.rotate_verifier(&old_verifier, &new_verifier);
+
+    let events = env.events().all();
+    assert!(!client.is_verifier(&old_verifier));
+    assert!(client.is_verifier(&new_verifier));
+
+    let mut found = false;
+    for i in 0..events.len() {
+        let (contract, topics, data) = events.get(i).unwrap();
+        if contract != client.address {
+            continue;
+        }
+        let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        if topic != symbol_short!("verrot") {
+            continue;
+        }
+        assert_eq!(topics.len(), 2);
+        let topic_old_verifier: Address = topics.get(1).unwrap().try_into_val(&env).unwrap();
+        let payload: VerifierRotation = data.try_into_val(&env).unwrap();
+        assert_eq!(topic_old_verifier, old_verifier);
+        assert_eq!(
+            payload,
+            VerifierRotation {
+                old_verifier: old_verifier.clone(),
+                new_verifier: new_verifier.clone(),
+                ledger,
+            }
+        );
+        found = true;
+    }
+    assert!(found, "rotate_verifier must emit a verrot event");
+}
+
+#[test]
+fn rotate_verifier_requires_admin_auth() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+    client.add_verifier(&old_verifier);
+
+    env.mock_auths(&[]);
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert!(result.is_err());
+
+    env.mock_all_auths();
+    assert!(client.is_verifier(&old_verifier));
+    assert!(!client.is_verifier(&new_verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_unregistered_old_verifier() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert_eq!(result, Err(Ok(Error::NotFound)));
+    assert!(!client.is_verifier(&old_verifier));
+    assert!(!client.is_verifier(&new_verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_same_key_without_state_change() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+
+    let result = client.try_rotate_verifier(&verifier, &verifier);
+    assert_eq!(result, Err(Ok(Error::AlreadyRegistered)));
+    assert!(client.is_verifier(&verifier));
+}
+
+#[test]
+fn rotate_verifier_rejects_registered_new_key_without_state_change() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let old_verifier = Address::generate(&env);
+    let new_verifier = Address::generate(&env);
+    client.add_verifier(&old_verifier);
+    client.add_verifier(&new_verifier);
+
+    let result = client.try_rotate_verifier(&old_verifier, &new_verifier);
+    assert_eq!(result, Err(Ok(Error::AlreadyRegistered)));
+    assert!(client.is_verifier(&old_verifier));
+    assert!(client.is_verifier(&new_verifier));
 }
 
 // ─── On-chain verification status mirror (#436) ────────────────────────────

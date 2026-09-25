@@ -177,7 +177,7 @@ diagnostics line between the summary and `Next:`:
 mindvault_setup_wallet failed to create wallet: service temporarily unavailable
 Service: https://stellar-sponsored-agent-account.onrender.com · Endpoint: POST /create · Status: 503 · Issue: unavailable · Reachable: yes · Retryable: yes
 Source: sponsored-account service · Category: server · HTTP 503
-Next: The account sponsorship service is unavailable; it may be restarting. Wait for it to come back and retry — no wallet was created, so retrying is safe.
+Next: The account sponsorship service is unavailable; it may be restarting. Wait for it to come back and retry. No wallet was persisted locally, so retrying is safe — but it creates a NEW account: if the service already funded one before failing, that account is orphaned (its secret key was never delivered) and cannot be recovered or spent.
 ```
 
 `Issue` is the field to branch on:
@@ -201,8 +201,59 @@ guidance then names the configuration to fix rather than a wait to sit out. When
 the service sends a `Retry-After` header, its value is echoed as `Retry-After:
 <n>s` and repeated in the guidance.
 
-Wallet creation is never partially applied: every outage above leaves no wallet
-behind, so a retry is safe.
+### Half-completed creation (#839)
+
+This page used to say wallet creation "is never partially applied: every outage
+above leaves no wallet behind, so a retry is safe." The second half is true. The
+first half is not something this server can know.
+
+Account creation is one non-idempotent POST. When it times out, or answers 5xx
+from a hop in front of the service, the request may already have been processed:
+the account can be minted and funded while the reply carrying its **secret key**
+is lost. Nothing is persisted locally either way, so retrying is safe for the
+agent — but it mints a _new_ account, and the earlier one is **orphaned**:
+without its secret key nobody can spend from it, ever. The guidance says so
+rather than implying there is a funded wallet to go and find.
+
+`unreachable` is the one case where nothing can have run, and its guidance says
+that plainly.
+
+A 200 is also not proof the service finished. A half-completed creation can
+answer with an address whose secret key is missing, malformed, or belongs to a
+different account. Persisting that gives the agent a wallet it cannot sign for,
+and everything downstream reports it as healthy — `mindvault_wallet_info` shows
+the address, queries Horizon, and reports a real balance for funds the agent can
+never spend. So the keypair is verified before anything is stored: the address
+must be derivable from the secret key received with it.
+
+```
+mindvault_setup_wallet refused the wallet returned by https://sponsor.example:
+the response carried the address GABC… but no secret key, so this agent cannot
+sign for it. Nothing was persisted — the local keystore is unchanged. If the
+service already funded that account, it is orphaned: without the matching secret
+key nobody can spend from it, and retrying creates a new account rather than
+recovering it. …
+```
+
+The same check runs over the _stored_ keypair whenever `mindvault_wallet_info`
+reports a balance, because a profile can reach that broken shape through a
+hand-edited state file or a backup restored from another profile:
+
+```
+USDC Balance: 25.0
+⚠ Keystore: This profile's stored secret key does not own this address (…).
+Any balance shown here is NOT spendable by this agent: payments will fail at
+signing. Run mindvault_import_wallet with the correct secret key, or
+mindvault_setup_wallet to create a new wallet.
+```
+
+`mindvault_wallet_info`'s structured output carries the same fact as
+`ownsAddress`, so an agent can branch on it without parsing prose.
+
+Finally, a failed state-file write no longer reports success: when the wallet is
+created but `~/.mindvault/state.json` cannot be written, the reply says the
+wallet is in memory only and will be lost when the server stops, and points at
+`mindvault_backup_state`.
 
 ### What is withheld
 

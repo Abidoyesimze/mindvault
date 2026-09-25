@@ -64,8 +64,13 @@ const POLICIES: readonly PaidConfirmationPolicy[] = ["off", "usdc", "all"];
  *
  * `mindvault_publish` pays the x402 verification fee; `mindvault_buy` pays the
  * resource's asking price. Both settle on-chain and neither can be undone.
+ * `mindvault_publish_batch` pays one verification fee per item in the batch.
  */
-export const USDC_SPENDING_TOOLS = ["mindvault_publish", "mindvault_buy"] as const;
+export const USDC_SPENDING_TOOLS = [
+  "mindvault_publish",
+  "mindvault_publish_batch",
+  "mindvault_buy",
+] as const;
 
 /**
  * Tools that submit a Stellar transaction and so spend network fees.
