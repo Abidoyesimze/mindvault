@@ -29,6 +29,7 @@ import { applyPreviewLimits, serializePreview } from "./previewLimits.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
+import { Client as DynamicContractClient } from "@stellar/stellar-sdk/contract";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -980,6 +981,10 @@ async function getAccountBalances(
 }
 
 function formatResource(r: any): string {
+  const tags = Array.isArray(r.tags) && r.tags.length > 0 ? `\n  Tags: ${r.tags.join(", ")}` : "";
+  if (tags) {
+    return `[${r.id}] ${r.title} - $${r.price} USDC\n  ${r.description ?? ""}${tags}\n  ${r.accessUrl}`;
+  }
   return `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`;
 }
 
@@ -989,6 +994,7 @@ function catalogItemStructured(r: any): {
   price: string | number | null;
   description: string | null;
   accessUrl: string | null;
+  tags: string[];
 } {
   return {
     id: r?.id ?? null,
@@ -996,6 +1002,7 @@ function catalogItemStructured(r: any): {
     price: r?.price ?? null,
     description: r?.description ?? null,
     accessUrl: r?.accessUrl ?? null,
+    tags: Array.isArray(r?.tags) ? r.tags.filter((tag: unknown) => typeof tag === "string") : [],
   };
 }
 
@@ -2943,6 +2950,8 @@ const STATE_MUTATING_TOOLS = new Set([
   "mindvault_transfer_ownership",
   "mindvault_set_listed",
   "mindvault_set_tags",
+  "mindvault_freeze",
+  "mindvault_royalty",
   "mindvault_reset",
   "mindvault_restore_state",
   "mindvault_import_wallet",

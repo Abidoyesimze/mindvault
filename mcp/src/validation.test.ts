@@ -78,6 +78,12 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   },
   mindvault_set_listed: { resourceId: "res-001", listed: true },
   mindvault_set_tags: { resourceId: "res-001", tags: ["dataset"] },
+  mindvault_freeze: { resourceId: "res-001", confirm: "freeze_metadata" },
+  mindvault_fee_config: {},
+  mindvault_royalty: {
+    resourceId: "res-001",
+    royaltyRecipient: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+  },
   mindvault_check_state_permissions: {},
   mindvault_registry_health: {},
   mindvault_import_wallet: {},

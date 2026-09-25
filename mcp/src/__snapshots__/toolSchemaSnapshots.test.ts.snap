@@ -214,6 +214,12 @@ exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `
               "null",
             ],
           },
+          "tags": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
           "title": {
             "type": [
               "string",
@@ -227,6 +233,7 @@ exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `
           "price",
           "description",
           "accessUrl",
+          "tags",
         ],
         "type": "object",
       },
@@ -728,6 +735,202 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
     "totalAmount",
     "currency",
     "receipts",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_fee_config > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Fee Config",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_fee_config > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_fee_config > output schema 1`] = `
+{
+  "properties": {
+    "configured": {
+      "type": "boolean",
+    },
+    "contract": {},
+    "creatorPayoutBps": {
+      "type": "integer",
+    },
+    "creatorPayoutPercent": {
+      "type": "string",
+    },
+    "feeRecipient": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "message": {
+      "type": "string",
+    },
+    "network": {},
+    "platformFeeBps": {
+      "type": "integer",
+    },
+    "royaltyBps": {
+      "type": "integer",
+    },
+    "rpc": {},
+    "source": {
+      "type": "string",
+    },
+    "totalFeeBps": {
+      "type": "integer",
+    },
+  },
+  "required": [
+    "source",
+    "configured",
+    "contract",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_freeze > annotations 1`] = `
+{
+  "destructiveHint": true,
+  "idempotentHint": true,
+  "readOnlyHint": false,
+  "title": "Freeze Metadata",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_freeze > input schema 1`] = `
+{
+  "properties": {
+    "confirm": {
+      "description": "Required exact confirmation string. Pass "freeze_metadata" to perform the irreversible freeze.",
+      "examples": [
+        "freeze_metadata",
+      ],
+      "type": "string",
+    },
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
+    "resourceId": {
+      "description": "The resource ID whose metadata should be frozen. Example: 'cm7x8y9z'",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+    "confirm",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "listed": {
+          "type": "boolean",
+        },
+        "metadata": {
+          "type": "string",
+        },
+        "newCreator": {
+          "type": "string",
+        },
+        "price": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "status",
+        "resourceId",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
   ],
   "type": "object",
 }
@@ -2184,6 +2387,142 @@ exports[`tool schema snapshots > mindvault_rotate_publisher_key > input schema 1
 
 exports[`tool schema snapshots > mindvault_rotate_publisher_key > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_royalty > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": false,
+  "title": "Set Royalty Recipient",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_royalty > input schema 1`] = `
+{
+  "properties": {
+    "clear": {
+      "description": "When true, clear the resource-specific royalty recipient and use the registry default.",
+      "type": "boolean",
+    },
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
+    "resourceId": {
+      "description": "The resource ID to configure royalties for. Example: 'cm7x8y9z'",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+      ],
+      "type": "string",
+    },
+    "royaltyRecipient": {
+      "description": "The Stellar public key (G... , 56 chars) to receive royalties. Omit when clear is true.",
+      "examples": [
+        "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "listed": {
+          "type": "boolean",
+        },
+        "metadata": {
+          "type": "string",
+        },
+        "newCreator": {
+          "type": "string",
+        },
+        "price": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "status",
+        "resourceId",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_search > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -2344,6 +2683,12 @@ exports[`tool schema snapshots > mindvault_search > output schema 1`] = `
               "null",
             ],
           },
+          "tags": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
           "title": {
             "type": [
               "string",
@@ -2357,6 +2702,7 @@ exports[`tool schema snapshots > mindvault_search > output schema 1`] = `
           "price",
           "description",
           "accessUrl",
+          "tags",
         ],
         "type": "object",
       },
@@ -3294,6 +3640,8 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_check_consistency",
   "mindvault_check_state_permissions",
   "mindvault_export_receipts",
+  "mindvault_fee_config",
+  "mindvault_freeze",
   "mindvault_import_wallet",
   "mindvault_list_profiles",
   "mindvault_metrics",
@@ -3316,6 +3664,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_resource_provenance",
   "mindvault_restore_state",
   "mindvault_rotate_publisher_key",
+  "mindvault_royalty",
   "mindvault_search",
   "mindvault_set_listed",
   "mindvault_set_price",

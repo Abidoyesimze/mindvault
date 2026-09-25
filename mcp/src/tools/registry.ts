@@ -165,6 +165,10 @@ export async function getAccountBalances(
 }
 
 export function formatResource(r: any): string {
+  const tags = Array.isArray(r.tags) && r.tags.length > 0 ? `\n  Tags: ${r.tags.join(", ")}` : "";
+  if (tags) {
+    return `[${r.id}] ${r.title} - $${r.price} USDC\n  ${r.description ?? ""}${tags}\n  ${r.accessUrl}`;
+  }
   return `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`;
 }
 
