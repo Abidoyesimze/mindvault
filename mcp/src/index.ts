@@ -96,6 +96,13 @@ import {
 } from "./publishStatus.js";
 import { type ApiResponse } from "./apiResponse.js";
 import { safeErrorMessage, safeLog } from "./redaction.js";
+import {
+  compareUsdc,
+  normalizeUsdcBalance,
+  stroopsToUsdc,
+  trimUsdc,
+  usdcToStroops as toStroops,
+} from "./usdcAmount.js";
 import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -141,8 +148,15 @@ import {
 import {
   mapSponsoredHttpFailure,
   mapSponsoredTransportFailure,
+  sanitizeServiceUrl,
   SPONSORED_CREATE_PATH,
 } from "./sponsoredDiagnostics.js";
+import {
+  checkWalletIntegrity,
+  sponsoredWalletIntegrityError,
+  unownedWalletNote,
+  type DerivePublicKey,
+} from "./sponsoredWallet.js";
 import { parseMetadataHash } from "./metadataHash.js";
 import {
   applyCatalogSort,
@@ -154,6 +168,7 @@ import {
 } from "./catalogFilters.js";
 import {
   catalogCacheLabel,
+  type CatalogFallbackReason,
   getCatalogSnapshot,
   getPreviewSnapshot,
   recordCatalogSnapshot,
@@ -360,7 +375,15 @@ function persistableProfiles(): Record<string, WalletProfile> {
   return out;
 }
 
-function saveState(): void {
+/**
+ * Persist the profile state, reporting whether the write landed.
+ *
+ * A failed write stays non-fatal — losing the state file must not take the
+ * server down mid-session — but callers that just told the agent its wallet is
+ * safe on disk need to know when it is not (#839). Callers that do not care can
+ * keep ignoring the result.
+ */
+function saveState(): boolean {
   try {
     const state: ProfileState = {
       version: STATE_VERSION,
@@ -368,8 +391,10 @@ function saveState(): void {
       profiles: persistableProfiles(),
     };
     writeAtomically(STATE_FILE, JSON.stringify(state, null, 2), 0o600);
+    return true;
   } catch (err) {
     console.error("MindVault MCP: failed to persist state:", safeErrorMessage(err));
+    return false;
   }
 }
 
@@ -812,10 +837,26 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
     };
   }
 
+  // Horizon sends a decimal string; the balance is tagged with that encoding
+  // and normalized once, so the number this status is decided from can never be
+  // a stroop count read as decimal USDC (#838).
   const usdc = usdcBalance.balance ?? "0";
-  const usdcFloat = parseFloat(usdc);
+  const normalized = normalizeUsdcBalance({ source: "horizon", balance: usdc });
 
-  if (usdcFloat === 0) {
+  if (normalized === null) {
+    return {
+      status: "zero",
+      xlmBalance: xlm,
+      xlmReserve: reserve.toFixed(1),
+      xlmAvailable: available.toFixed(7),
+      usdcBalance: "0",
+      message:
+        `Horizon reported a USDC balance this server could not read ("${String(usdc).slice(0, 32)}"), ` +
+        `so it is treated as zero rather than guessed at. Re-run mindvault_wallet_info; if it persists, the Horizon endpoint is returning an unexpected balance format.`,
+    };
+  }
+
+  if (toStroops(normalized) === 0n) {
     return {
       status: "zero",
       xlmBalance: xlm,
@@ -909,14 +950,28 @@ async function insufficientFundsMessage(
   const need = typeof amountNeeded === "number" ? amountNeeded : parseFloat(amountNeeded);
   if (!Number.isFinite(need)) return null;
   const balance = await getUsdcBalance(wallet.publicKey);
-  const have = parseFloat(balance);
-  if (!Number.isFinite(have) || have >= need) return null;
-  const shortfall = need - have;
+
+  // Compared in stroops rather than floats, so the decision to spend never
+  // depends on binary rounding, and an amount that cannot be parsed blocks the
+  // payment instead of reading as "enough" (#838).
+  const needAmount = need.toFixed(7);
+  const comparison = compareUsdc(balance, needAmount);
+  if (comparison === null) {
+    return [
+      `Cannot confirm the USDC balance before paying to ${action}.`,
+      `Amount needed: ${trimUsdc(needAmount)} USDC`,
+      `Reported balance: "${String(balance).slice(0, 32)}" could not be read as a USDC amount.`,
+      `No payment was submitted. Check the wallet with mindvault_wallet_info and retry.`,
+    ].join("\n");
+  }
+  if (comparison >= 0) return null;
+
+  const shortfallStroops = (toStroops(needAmount) ?? 0n) - (toStroops(balance) ?? 0n);
   return [
     `Insufficient USDC to ${action}.`,
-    `Amount needed: ${need} USDC`,
-    `Current balance: ${have} USDC`,
-    `Shortfall: ${shortfall.toFixed(7).replace(/\.?0+$/, "")} USDC`,
+    `Amount needed: ${trimUsdc(needAmount)} USDC`,
+    `Current balance: ${trimUsdc(balance)} USDC`,
+    `Shortfall: ${trimUsdc(stroopsToUsdc(shortfallStroops))} USDC`,
     `Fund ${wallet.publicKey} with the shortfall and retry.`,
   ].join("\n");
 }
@@ -1004,6 +1059,17 @@ function sponsoredAccountErrorData(status: number, data: unknown): unknown {
   return data;
 }
 
+/**
+ * Stellar key derivation for the wallet integrity checks, loaded on demand.
+ *
+ * The SDK import is deferred — as `mindvault_import_wallet` already does — so
+ * the full Stellar SDK stays off the server's startup path.
+ */
+async function stellarDerivePublicKey(): Promise<DerivePublicKey> {
+  const { Keypair } = await import("@stellar/stellar-sdk");
+  return (secretKey: string) => Keypair.fromSecret(secretKey).publicKey();
+}
+
 async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
   const target = resolveProfileName(profileArg);
   const operation = "mindvault_setup_wallet failed to create wallet";
@@ -1030,18 +1096,30 @@ async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
       }),
     );
   }
+  // A 200 is not proof the service completed: a half-finished creation can
+  // answer with an address whose secret is missing or belongs to a different
+  // account. Persisting that gives the agent a funded address it cannot sign
+  // for, which every later tool then reports as a healthy wallet (#839).
+  const integrity = checkWalletIntegrity(res.data ?? {}, await stellarDerivePublicKey());
+  if (!integrity.ok) {
+    throw sponsoredWalletIntegrityError(integrity, sanitizeServiceUrl(SPONSORED_ACCOUNT_URL));
+  }
+
   activeProfileName = target;
-  activeProfile().wallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
-  saveState();
+  activeProfile().wallet = { publicKey: integrity.publicKey, secretKey: integrity.secretKey };
+  const persisted = saveState();
   const text = [
     `Wallet created.`,
     `Profile: ${target}`,
-    `Address: ${res.data.publicKey}`,
-    `Wallet persisted to ${STATE_FILE} (mode 0600).`,
+    `Address: ${integrity.publicKey}`,
+    persisted
+      ? `Wallet persisted to ${STATE_FILE} (mode 0600).`
+      : `⚠ Wallet held in memory only — writing ${STATE_FILE} failed, so it is lost when this server stops. ` +
+        `Back it up now with mindvault_backup_state, then fix the state directory's permissions.`,
   ].join("\n");
   return {
     text,
-    structured: { profile: target, address: res.data.publicKey, persisted: true },
+    structured: { profile: target, address: integrity.publicKey, persisted },
   };
 }
 
@@ -1049,6 +1127,13 @@ async function walletInfoOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const details = await getBalanceDetails(wallet.publicKey);
   const publisherRegistered = !!currentApiKey();
+
+  // A stored keypair can name an address this agent cannot sign for — a
+  // half-completed sponsored creation, a hand-edited state file, a restored
+  // backup from another profile. The balance below is real either way, so say
+  // plainly when it is not spendable rather than letting it read as funds (#839).
+  const integrity = checkWalletIntegrity(wallet, await stellarDerivePublicKey());
+  const ownsAddress = integrity.ok;
 
   const lines = [
     `Profile: ${activeProfileName}`,
@@ -1060,6 +1145,10 @@ async function walletInfoOutcome(): Promise<ToolOutcome> {
     `USDC Status: ${details.status}`,
     `Publisher registered: ${publisherRegistered ? "yes" : "no"}`,
   ];
+
+  if (!ownsAddress) {
+    lines.push(`⚠ Keystore: ${unownedWalletNote(integrity)}`);
+  }
 
   if (details.message) {
     lines.push(`Note: ${details.message}`);
@@ -1076,6 +1165,8 @@ async function walletInfoOutcome(): Promise<ToolOutcome> {
       usdcBalance: details.usdcBalance,
       usdcStatus: details.status,
       publisherRegistered,
+      /** False when the stored secret does not derive this address (#839). */
+      ownsAddress,
       note: details.message ?? null,
     },
   };
@@ -1151,6 +1242,45 @@ export function listProfiles(): string {
   return outcomeText(listProfilesOutcome());
 }
 
+/**
+ * Whether a failed catalog read should fall back to the offline snapshot (#837).
+ *
+ * The cache exists for one situation: the catalog could not answer. A transport
+ * failure is that situation, and so is a transient server or throttling status
+ * once the retry layer has exhausted its attempts — `jsonFetch` already replays
+ * idempotent GETs on 408/425/429/5xx, so reaching this point means the gateway
+ * stayed broken.
+ *
+ * Everything else is the service answering, and answering about *this request*:
+ * a 400 on a malformed filter, a 404, a 401. Serving a snapshot for those hides
+ * a fixable client error behind stale data labelled "API unreachable", and the
+ * agent repeats the bad request against a cache that will never reflect it. So
+ * those propagate.
+ */
+function catalogFallbackFor(err: unknown): CatalogFallbackReason | null {
+  const mapped = mappedErrorOf(err);
+  if (!mapped) return { kind: "unreachable" };
+  if (mapped.status === undefined) {
+    // Transport-level: classified as network or timeout, never a status.
+    return mapped.category === "network" || mapped.category === "timeout"
+      ? { kind: "unreachable" }
+      : null;
+  }
+  return isRetryableStatus(mapped.status) ? { kind: "status", status: mapped.status } : null;
+}
+
+/** Resolve a failed catalog read to a snapshot, or rethrow when it must surface. */
+function catalogSnapshotFor(err: unknown): { resources: unknown[]; notice: string } | null {
+  const reason = catalogFallbackFor(err);
+  if (!reason) return null;
+  const snapshot = getCatalogSnapshot();
+  if (!snapshot) return null;
+  return {
+    resources: snapshot.resources,
+    notice: catalogCacheLabel(snapshot.savedAtMs, Date.now(), reason),
+  };
+}
+
 async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome> {
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
@@ -1172,10 +1302,10 @@ async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome>
     recordCatalogSnapshot(raw);
     notice = cacheStalenessNotice(res.headers);
   } catch (err) {
-    const snapshot = getCatalogSnapshot();
-    if (!snapshot) throw err;
-    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
-    notice = catalogCacheLabel(snapshot.savedAtMs);
+    const fallback = catalogSnapshotFor(err);
+    if (!fallback) throw err;
+    raw = Array.isArray(fallback.resources) ? (fallback.resources as any[]) : [];
+    notice = fallback.notice;
   }
   const items: any[] = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
@@ -1239,10 +1369,10 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
     recordCatalogSnapshot(raw);
     notice = cacheStalenessNotice(res.headers);
   } catch (err) {
-    const snapshot = getCatalogSnapshot();
-    if (!snapshot) throw err;
-    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
-    notice = catalogCacheLabel(snapshot.savedAtMs);
+    const fallback = catalogSnapshotFor(err);
+    if (!fallback) throw err;
+    raw = Array.isArray(fallback.resources) ? (fallback.resources as any[]) : [];
+    notice = fallback.notice;
   }
 
   // Client-side keyword / tags / listed / skipped for unit-test compatibility
@@ -1278,10 +1408,12 @@ async function previewData(resourceId: string): Promise<{ r: any; label: string 
     recordPreviewSnapshot(resourceId, res.data);
     return { r: res.data, label: null };
   } catch (err) {
-    const snap = getPreviewSnapshot(resourceId);
-    // No cached snapshot for this resource — surface the original error.
-    if (!snap) throw err;
-    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs) };
+    // Same rule as browse/search: a snapshot answers for a catalog that could
+    // not answer, never for a 404 on an id the agent got wrong (#837).
+    const reason = catalogFallbackFor(err);
+    const snap = reason ? getPreviewSnapshot(resourceId) : null;
+    if (!snap || !reason) throw err;
+    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs, Date.now(), reason) };
   }
 }
 
@@ -1747,21 +1879,20 @@ async function agentStatus(): Promise<string> {
   return JSON.stringify(res.data, null, 2);
 }
 
-function stroopsToUsdc(stroops: bigint): string {
-  const STROOPS_PER_USDC = 10_000_000n;
-  const negative = stroops < 0n;
-  const abs = negative ? -stroops : stroops;
-  const whole = abs / STROOPS_PER_USDC;
-  const frac = abs % STROOPS_PER_USDC;
-  return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(7, "0")}`;
-}
-
+/**
+ * Decimal USDC for an on-chain stroop amount, throwing on an amount the shared
+ * converter will not accept. The registry contract takes stroops, so a price
+ * that cannot be expressed exactly must stop here rather than be rounded into
+ * a transaction (#838).
+ */
 export function usdcToStroops(usdc: string): bigint {
-  const parts = usdc.split(".");
-  const whole = BigInt(parts[0] || "0");
-  const fracStr = (parts[1] || "").padEnd(7, "0").slice(0, 7);
-  const frac = BigInt(fracStr);
-  return whole * 10_000_000n + frac;
+  const stroops = toStroops(usdc);
+  if (stroops === null) {
+    throw new Error(
+      `Invalid USDC amount "${usdc}". Use a non-negative decimal with at most 7 decimal places, e.g. "5.00".`,
+    );
+  }
+  return stroops;
 }
 
 export async function updateMetadata(resourceId: string, metadata: string): Promise<string> {

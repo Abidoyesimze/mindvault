@@ -44,6 +44,22 @@ mindvault_restore_state {
 
 Unit coverage: [`mcp/src/stateBackup.test.ts`](../mcp/src/stateBackup.test.ts).
 
+## Wallet integrity
+
+A profile's wallet is only usable if the secret key it stores derives the address
+it stores. That is checked at both boundaries where a keypair can enter:
+
+- `mindvault_setup_wallet` verifies the sponsored-account service's response
+  before persisting, so a half-completed creation cannot leave a funded address
+  the keystore does not own (#839, see
+  [mcp-error-reference.md](mcp-error-reference.md#half-completed-creation-839)).
+- `mindvault_wallet_info` re-checks the stored keypair and adds a `⚠ Keystore:`
+  line — and `ownsAddress: false` in its structured output — when they disagree,
+  so a balance for an unsignable address never reads as spendable funds.
+
+`mindvault_import_wallet` derives the address from the secret it is given, so an
+imported wallet is consistent by construction.
+
 ## Reset confirmation guard
 
 `mindvault_reset` deletes wallet secret keys and publisher API keys. They are
@@ -77,8 +93,16 @@ mindvault_reset { "all": true, "confirm": true }
 
 Notes:
 
-- `confirm` accepts the same truthy forms as `confirmMainnet` (`true`, `1`,
-  `"true"`, `"yes"`). Anything else — including omitting it — is "not confirmed".
+- `confirm` accepts exactly `true`, `1`, `"true"`, `"1"`, and `"yes"`
+  (case-insensitive, surrounding space ignored). Anything else — including
+  omitting it — is "not confirmed".
+- That list is **codified in the guard itself**, not inherited from another
+  helper (#836). The server holds more than one notion of "truthy": mock mode
+  also accepts `"on"`, and the argument validator coerces its own set of flag
+  spellings. Reset is the one confirmation whose false positive cannot be undone,
+  so widening it has to be a deliberate edit to `RESET_CONFIRM_STRINGS` in
+  [`mcp/src/resetGuard.ts`](../mcp/src/resetGuard.ts) — a test pins the set, and
+  relaxing any _other_ truthy vocabulary cannot widen this one by accident.
 - The warning is deterministic and never echoes a secret key.
 - The guard is independent of the mainnet guardrail: on mainnet a reset needs
   both `confirmMainnet` and `confirm`.
