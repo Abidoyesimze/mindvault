@@ -887,8 +887,9 @@ impl VaultRegistry {
     }
 
     /// Register a new resource together with an immutable digest of its
-    /// off-chain content. The hash is written once at registration and is
-    /// never mutated afterwards; `update_metadata` only moves the pointer.
+    /// off-chain content. Supplying a hash binds the metadata pointer to this
+    /// registration: `update_metadata` cannot change it afterward. Passing
+    /// `None` preserves the mutable metadata behavior of `register`.
     ///
     /// Rejects an empty hash or one longer than `MAX_CONTENT_HASH_LEN`
     /// (`ContentHashTooLong`). All other validation matches `register`.
@@ -1041,7 +1042,8 @@ impl VaultRegistry {
     ///
     /// No-op guard: if `metadata` is identical to the resource's current
     /// metadata pointer, the call succeeds without touching storage or
-    /// emitting an `updmeta` event.
+    /// emitting an `updmeta` event. A resource registered with a content hash
+    /// rejects any divergent pointer with `MetadataFrozen`.
     pub fn update_metadata(env: Env, id: String, metadata: String) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
@@ -1051,11 +1053,15 @@ impl VaultRegistry {
         if resource.frozen {
             return Err(Error::MetadataFrozen);
         }
-        Self::validate_metadata_pointer(&metadata)?;
-
         if resource.metadata == metadata {
             return Ok(());
         }
+
+        if resource.content_hash.is_some() {
+            return Err(Error::MetadataFrozen);
+        }
+
+        Self::validate_metadata_pointer(&metadata)?;
 
         let old_metadata = resource.metadata.clone();
         resource.metadata = metadata.clone();

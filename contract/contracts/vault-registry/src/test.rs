@@ -804,6 +804,52 @@ fn update_metadata_changes_pointer() {
 }
 
 #[test]
+fn register_with_hash_immutably_binds_metadata_pointer() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "hashbound");
+    let metadata = String::from_str(&env, "ipfs://QmImmutable");
+    let content_hash = String::from_str(&env, "sha256:registered");
+
+    client.register_with_hash(
+        &creator,
+        &id,
+        &100i128,
+        &metadata,
+        &empty_tags(&env),
+        &Some(content_hash.clone()),
+    );
+
+    let divergent = String::from_str(&env, "ipfs://QmDifferent");
+    assert_eq!(
+        client.try_update_metadata(&id, &divergent),
+        Err(Ok(Error::MetadataFrozen))
+    );
+
+    let resource = client.get(&id);
+    assert_eq!(resource.metadata, metadata);
+    assert_eq!(resource.content_hash, Some(content_hash));
+}
+
+#[test]
+fn register_with_hash_without_content_hash_keeps_metadata_mutable() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "hashoptional");
+    let initial = String::from_str(&env, "ipfs://QmInitial");
+    client.register_with_hash(
+        &creator,
+        &id,
+        &100i128,
+        &initial,
+        &empty_tags(&env),
+        &None,
+    );
+
+    let updated = String::from_str(&env, "ipfs://QmUpdated");
+    client.update_metadata(&id, &updated);
+    assert_eq!(client.get(&id).metadata, updated);
+}
+
+#[test]
 fn ownership_can_transfer() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r3");
