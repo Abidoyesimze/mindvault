@@ -313,6 +313,19 @@ export function exportReceiptsTool(args?: Record<string, unknown>): string {
   return JSON.stringify(buildReceiptExport(stored, options), null, 2);
 }
 
+export function exportReceiptsToolWithTimeout(
+  args: Record<string, unknown> | undefined,
+  timeoutMs: number,
+): string {
+  if (timeoutMs <= 0) return exportReceiptsTool(args);
+  const started = Date.now();
+  const result = exportReceiptsTool(args);
+  if (Date.now() - started > timeoutMs) {
+    throw new Error(`Request timed out after ${timeoutMs}ms (http). Configure mindvault_export_receipts in MINDVAULT_TOOL_TIMEOUTS.`);
+  }
+  return result;
+}
+
 /**
  * JSON Schema for the export envelope, advertised as the tool's `outputSchema`.
  *

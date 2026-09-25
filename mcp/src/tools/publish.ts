@@ -444,6 +444,7 @@ async function signAndSendRegistryTx(
       signTransaction: async (xdr: string) => {
         const { Transaction } = await import("@stellar/stellar-sdk");
         const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+        assertTransactionFeeWithinCeiling({ feeStroops: stellarTx.fee });
         stellarTx.sign(keypair);
         return { signedTxXdr: stellarTx.toXDR() };
       },
