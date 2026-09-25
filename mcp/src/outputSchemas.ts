@@ -242,6 +242,21 @@ export const REGISTRY_LIST_OUTPUT_SCHEMA = {
   required: ["source", "start", "limit", "count", "resources", "contract"],
 } as const;
 
+export const REGISTRY_COUNT_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    source: { type: "string" },
+    count: { type: "integer" },
+    listedCount: { type: "integer" },
+    creatorCount: { type: "integer" },
+    creator: { type: "string" },
+    contract: {},
+    network: {},
+    rpc: {},
+  },
+  required: ["source", "count", "listedCount", "contract"],
+} as const;
+
 export const REGISTRY_INFO_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -405,6 +420,34 @@ export const RECOVER_CACHE_OUTPUT_SCHEMA = {
   required: ["source", "action", "message"],
 } as const;
 
+const BATCH_PUBLISH_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    index: { type: "number" },
+    title: { type: "string" },
+    id: { type: ["string", "null"] },
+    verificationStatus: { type: "string", enum: ["approved", "rejected", "error"] },
+    onchainStatus: { type: ["string", "null"] },
+    flags: { type: "array", items: { type: "string" } },
+    error: { type: "string" },
+  },
+  required: ["index", "title", "id", "verificationStatus", "onchainStatus"],
+} as const;
+
+export const PUBLISH_BATCH_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    requested: { type: "number" },
+    verified: { type: "number" },
+    rejected: { type: "number" },
+    errored: { type: "number" },
+    onchainStatus: { type: "string" },
+    txHash: { type: ["string", "null"] },
+    items: { type: "array", items: BATCH_PUBLISH_ITEM_SCHEMA },
+  },
+  required: ["requested", "verified", "rejected", "errored", "onchainStatus", "txHash", "items"],
+} as const;
+
 /** Tools that must stay text-only (no schema, no structuredContent). */
 export const TEXT_ONLY_TOOLS = [
   "mindvault_check_bindings",
@@ -417,4 +460,7 @@ export const TEXT_ONLY_TOOLS = [
   "mindvault_register",
   "mindvault_rotate_publisher_key",
   "mindvault_set_tags",
+  "mindvault_switch_network_profile",
+  "mindvault_resource_provenance",
+  "mindvault_resource_change_log",
 ] as const;

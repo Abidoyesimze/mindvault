@@ -386,50 +386,41 @@ export function mockSetListed(resourceId: string, listed: boolean): string {
   );
 }
 
-export function mockFreezeMetadata(resourceId: string): string {
-  return JSON.stringify(
-    {
-      status: "success",
-      resourceId,
-      txHash: `MOCK_TX_FREEZE_METADATA_${resourceId}`,
-      explorerUrl: explorerTxUrl(`MOCK_TX_FREEZE_METADATA_${resourceId}`),
-      source: "on-chain (mock)",
-    },
-    null,
-    2,
-  );
+export function mockSetTags(resourceId: string, tags: string[]): string {
+  const txHash = `MOCK_TX_SET_TAGS_${resourceId}`;
+  return [
+    `Tags updated for resource "${resourceId}".`,
+    `Tags: ${tags.length > 0 ? tags.join(", ") : "(none)"}`,
+    `Tx hash: ${txHash}`,
+    `Explorer: ${explorerTxUrl(txHash)}`,
+    "Source: on-chain (mock)",
+  ].join("\n");
 }
 
-export function mockSetRoyaltyRecipient(
-  resourceId: string,
-  royaltyRecipient: string | null,
+/**
+ * Deterministic mock for batch publish. Returns a summary that mirrors the
+ * real `publishBatch` output with all items approved and registered on-chain.
+ */
+export function mockPublishBatch(
+  items: Array<{ title: string; description?: string; price: string; externalUrl: string }>,
 ): string {
+  const itemResults = items.map((item, i) => ({
+    index: i,
+    title: item.title,
+    id: `mock-batch-${i + 1}`,
+    verificationStatus: "approved" as const,
+    onchainStatus: "registered",
+  }));
   return JSON.stringify(
     {
-      status: "success",
-      resourceId,
-      royaltyRecipient,
-      txHash: `MOCK_TX_ROYALTY_${resourceId}`,
-      explorerUrl: explorerTxUrl(`MOCK_TX_ROYALTY_${resourceId}`),
+      requested: items.length,
+      verified: items.length,
+      rejected: 0,
+      errored: 0,
+      onchainStatus: "registered",
+      txHash: `MOCK_TX_BATCH_REGISTER`,
+      items: itemResults,
       source: "on-chain (mock)",
-    },
-    null,
-    2,
-  );
-}
-
-export function mockFeeConfig(contractId: string): string {
-  return JSON.stringify(
-    {
-      source: "on-chain (mock)",
-      configured: true,
-      platformFeeBps: 250,
-      royaltyBps: 500,
-      totalFeeBps: 750,
-      creatorPayoutBps: 9250,
-      creatorPayoutPercent: "92.50",
-      feeRecipient: null,
-      contract: contractId,
     },
     null,
     2,
@@ -548,4 +539,36 @@ export function mockRegistryList(
     null,
     2,
   );
+}
+
+/**
+ * Stand-in for the on-chain count()/listed_count()/creator_resource_count()
+ * trio. Derives values from the same MOCK_REGISTRY_RESOURCES seed so the
+ * numbers stay consistent with mockRegistryList.
+ */
+export function mockRegistryCount(creator: string | undefined, contractId: string): string {
+  const all = MOCK_REGISTRY_RESOURCES;
+  const count = all.length;
+  const listedCount = all.filter((r) => r.listed).length;
+
+  const payload: {
+    source: string;
+    count: number;
+    listedCount: number;
+    creatorCount?: number;
+    creator?: string;
+    contract: string;
+  } = {
+    source: "on-chain (mock)",
+    count,
+    listedCount,
+    contract: contractId,
+  };
+
+  if (creator != null) {
+    payload.creator = creator;
+    payload.creatorCount = all.filter((r) => r.creator === creator).length;
+  }
+
+  return JSON.stringify(payload, null, 2);
 }

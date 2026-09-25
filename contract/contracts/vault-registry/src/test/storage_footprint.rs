@@ -118,6 +118,10 @@ fn storage_footprint_report() {
         royalty_bps: 250,
         fee_recipient: Some(admin.clone()),
     });
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: MAX_FEE_DESTINATION_BPS,
+        destination: FeeDestination::Burn,
+    });
     client.record_payment(
         &settler,
         &receipt_id,
@@ -127,6 +131,15 @@ fn storage_footprint_report() {
         &max_hash,
     );
     client.anchor_purchase_receipt(&verifier, &max_id, &buyer, &max_hash);
+    client.set_verification_status(
+        &typical_id,
+        &verifier,
+        &VerificationStatus::Verified,
+        &Some(String::from_str(
+            &env,
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )),
+    );
     client.flag_resource(&max_id, &moderator, &FlagReason::Copyright);
     client.set_flag_reason_hash(
         &max_id,
@@ -203,7 +216,19 @@ fn storage_footprint_report() {
             StorageKind::Persistent,
             200,
         ),
+        (
+            "AttestationHash",
+            DataKey::AttestationHash(typical_id.clone()),
+            StorageKind::Persistent,
+            160,
+        ),
         ("FeeConfig", DataKey::FeeConfig, StorageKind::Instance, 192),
+        (
+            "FeeDestination",
+            DataKey::FeeDestination,
+            StorageKind::Instance,
+            192,
+        ),
         ("Admin", DataKey::Admin, StorageKind::Instance, 80),
         (
             "Verifier grant",

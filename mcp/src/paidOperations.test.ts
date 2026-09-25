@@ -117,7 +117,11 @@ describe("paidOperationClass", () => {
     for (const name of USDC_SPENDING_TOOLS) {
       expect(paidOperationClass(name), name).toBe("usdc");
     }
-    expect(USDC_SPENDING_TOOLS).toEqual(["mindvault_publish", "mindvault_buy"]);
+    expect(USDC_SPENDING_TOOLS).toEqual([
+      "mindvault_publish",
+      "mindvault_publish_batch",
+      "mindvault_buy",
+    ]);
   });
 
   it("classifies the network-fee spenders", () => {
