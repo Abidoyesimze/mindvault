@@ -154,3 +154,18 @@ Every outbound HTTP request the MCP server makes — to the MindVault API, Horiz
 - **No header overwriting:** If a caller explicitly supplies `x-request-id`, that value is preserved — it is more specific than the ambient scope id.
 
 The implementation lives in `mcp/src/correlation.ts` and uses `AsyncLocalStorage` from `node:async_hooks`.
+
+---
+
+## Outbound URL Safety
+
+Publish and metadata flows carry a publisher-supplied URL: the `externalUrl` a buyer receives after payment (`mindvault_publish`, `mindvault_publish_batch`) and the `http(s)://` metadata pointer a resource anchors on-chain (`mindvault_update_metadata`). Those strings are validated before they leave the MCP so a URL chosen by a publisher cannot point a later server-side fetch at the host's own network — the classic server-side request forgery (SSRF) path to loopback services, RFC1918 addresses, or the cloud metadata endpoint at `169.254.169.254`.
+
+The guard lives in `mcp/src/outboundUrl.ts` and rejects, before any request is made:
+
+- **Non-`http(s)` schemes** — `file:`, `ftp:`, `gopher:`, and the like.
+- **Literal addresses in a blocked range** — loopback, private (RFC1918), link-local, shared/CGNAT, multicast, and reserved ranges, for both IPv4 and IPv6 (including IPv4-mapped `::ffff:` and 6to4/Teredo forms).
+- **Structurally local hostnames** — `localhost`, `.localhost`, `.local`, `.internal`, `.home.arpa`.
+- **Resolved private addresses (DNS rebinding)** — a named host whose DNS answer includes any blocked address is rejected, so a name that resolves publicly once and privately the next time does not get through. The same check runs on every redirect hop, so a public URL that redirects to a private one is stopped at the hop.
+
+Operators who deliberately target a private host opt in with `MINDVAULT_URL_ALLOWLIST` (see [mcp-env-variables.md](mcp-env-variables.md)); an allowlisted host skips the address checks but never the scheme check. The argument validator (`mcp/src/validation.ts`) applies the scheme, literal-IP, and structural-hostname checks with no DNS I/O; the DNS-rebinding and redirect checks run on the live fetch path via `resolveOutboundUrl` / `guardedFetch`.

@@ -6,6 +6,13 @@
  * are deterministic and agent-safe.
  */
 
+import {
+  isBlockedAddress,
+  isBlockedHostname,
+  isHostAllowlisted,
+  parseUrlAllowlist,
+} from "./outboundUrl.js";
+
 export interface DryRunPublishInput {
   title: string;
   description?: string;
@@ -130,20 +137,33 @@ function validatePrice(price: unknown): { valid: boolean; error?: string } {
   return { valid: true };
 }
 
-/** Validate a URL (http/https only). */
+/** Validate a URL (http/https only, host not local or reserved). */
 function validateUrl(url: unknown): { valid: boolean; error?: string } {
   if (!url || typeof url !== "string") {
     return { valid: false, error: "URL must be a non-empty string" };
   }
+  let parsed: URL;
   try {
-    const parsed = new URL(url);
-    if (!parsed.protocol.startsWith("http")) {
-      return { valid: false, error: "URL must use http or https protocol" };
-    }
-    return { valid: true };
+    parsed = new URL(url);
   } catch {
     return { valid: false, error: "Invalid URL format" };
   }
+  if (!parsed.protocol.startsWith("http")) {
+    return { valid: false, error: "URL must use http or https protocol" };
+  }
+  const allowlist = parseUrlAllowlist(process.env.MINDVAULT_URL_ALLOWLIST);
+  const host = parsed.hostname;
+  if (!isHostAllowlisted(host, allowlist)) {
+    if (isBlockedHostname(host)) {
+      return { valid: false, error: "URL host is a local or reserved name" };
+    }
+    const literal = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+    const isLiteral = literal.includes(":") || /^\d{1,3}(\.\d{1,3}){3}$/.test(literal);
+    if (isLiteral && isBlockedAddress(literal)) {
+      return { valid: false, error: "URL host is a private, loopback, or reserved address" };
+    }
+  }
+  return { valid: true };
 }
 
 /** Validate a resource ID (alphanumeric + dash/dot/underscore). */
