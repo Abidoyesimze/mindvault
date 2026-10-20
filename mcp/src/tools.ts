@@ -53,7 +53,11 @@ import {
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
-import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
+import {
+  RECEIPT_EXPORT_MAX_LIMIT,
+  RECEIPT_EXPORT_OUTPUT_SCHEMA,
+  RECEIPT_ROW_FIELDS,
+} from "./receipts.js";
 import {
   DEBUG_BUNDLE_DEFAULT_AUDIT_LINES,
   DEBUG_BUNDLE_MAX_AUDIT_LINES,
@@ -612,6 +616,27 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           maximum: RECEIPT_EXPORT_MAX_LIMIT,
           description: `Max receipts to export, newest first (1–${RECEIPT_EXPORT_MAX_LIMIT}).`,
           examples: [50, 100],
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Rows to skip from the newest receipt, for resumable paging. The envelope's nextOffset is the value to pass here on the next call.",
+          examples: [0, 500],
+        },
+        fields: {
+          type: "string",
+          description:
+            "Comma-separated subset of row fields to include, in order. Defaults to every field except sensitive ones. Known fields: " +
+            RECEIPT_ROW_FIELDS.join(", ") +
+            ". Selecting a sensitive field (profile) is an explicit opt-in.",
+          examples: ["resourceId,amount,purchasedAt", "resourceId,txHash,explorerUrl"],
+        },
+        includeSensitive: {
+          type: "boolean",
+          description:
+            "When true, keep sensitive fields (profile) in the default field set. Has no effect when fields is given.",
+          examples: [false, true],
         },
         groupBy: {
           type: "string",
