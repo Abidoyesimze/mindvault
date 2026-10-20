@@ -3,8 +3,12 @@ node_modules/
 
 # Builds
 dist/
+web/stats.html
 target/
 *.wasm
+
+# Bundle analysis report (generated locally by `pnpm --filter @mindvault/web bundle:stats`)
+web/stats.html
 
 # Secrets — never commit real env files (only .env.example is tracked)
 .env
@@ -13,6 +17,8 @@ target/
 
 # Stellar CLI local identities (contain secret keys)
 .stellar/
+
+packages/registry-client/bindings-tmp/
 
 # Logs
 *.log

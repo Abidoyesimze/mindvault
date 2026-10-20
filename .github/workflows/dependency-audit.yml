@@ -1,0 +1,59 @@
+name: Dependency audit
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'server/**'
+      - 'web/**'
+      - 'packages/**'
+      - 'mcp/**'
+      - 'contract/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.github/workflows/dependency-audit.yml'
+  workflow_dispatch:
+
+jobs:
+  pnpm-audit:
+    name: pnpm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Report high-severity JS advisories
+        # Audit production dependencies only; high-severity noise in eslint/dev
+        # tooling (brace-expansion via typescript-eslint) is tracked separately.
+        run: pnpm audit --audit-level high --prod
+
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/advisory-db
+            contract/target
+          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('contract/Cargo.toml', 'contract/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-audit-
+      - name: Report RustSec advisories
+        working-directory: contract
+        run: cargo audit
+

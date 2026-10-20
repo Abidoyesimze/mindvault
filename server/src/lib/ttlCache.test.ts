@@ -1,0 +1,140 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { createTtlCache } from "./ttlCache.js";
+import { cacheHits, cacheMisses } from "./metrics.js";
+
+beforeEach(() => {
+  cacheHits.reset();
+  cacheMisses.reset();
+});
+
+// A controllable clock so expiry is deterministic without real timers.
+function fakeClock(start = 0) {
+  let t = start;
+  return {
+    now: () => t,
+    advance: (ms: number) => {
+      t += ms;
+    },
+  };
+}
+
+describe("createTtlCache", () => {
+  it("returns a stored value within the TTL", () => {
+    const clock = fakeClock();
+    const cache = createTtlCache<number>({ defaultTtlMs: 1000, now: clock.now });
+
+    cache.set("a", 42);
+    clock.advance(999);
+
+    expect(cache.get("a")).toBe(42);
+  });
+
+  it("evicts and returns undefined once the entry expires", () => {
+    const clock = fakeClock();
+    const cache = createTtlCache<number>({ defaultTtlMs: 1000, now: clock.now });
+
+    cache.set("a", 42);
+    clock.advance(1000);
+
+    expect(cache.get("a")).toBeUndefined();
+    // A second read still misses (entry was evicted, not just hidden).
+    expect(cache.get("a")).toBeUndefined();
+  });
+
+  it("returns undefined for a key that was never set", () => {
+    const cache = createTtlCache<number>({ defaultTtlMs: 1000 });
+    expect(cache.get("missing")).toBeUndefined();
+  });
+
+  it("honors a per-entry TTL override", () => {
+    const clock = fakeClock();
+    const cache = createTtlCache<string>({ defaultTtlMs: 1000, now: clock.now });
+
+    cache.set("short", "x", 100);
+    clock.advance(150);
+
+    expect(cache.get("short")).toBeUndefined();
+  });
+
+  it("delete and clear remove entries", () => {
+    const cache = createTtlCache<string>({ defaultTtlMs: 1000 });
+
+    cache.set("a", "1");
+    cache.set("b", "2");
+    cache.delete("a");
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.get("b")).toBe("2");
+
+    cache.clear();
+    expect(cache.get("b")).toBeUndefined();
+  });
+
+  it("evicts the oldest key (FIFO) when maxSize is exceeded (#316)", () => {
+    const cache = createTtlCache<string>({ defaultTtlMs: 1000, maxSize: 2 });
+
+    cache.set("a", "1");
+    cache.set("b", "2");
+    cache.set("c", "3"); // exceeds cap -> evicts oldest ("a")
+
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.get("b")).toBe("2");
+    expect(cache.get("c")).toBe("3");
+  });
+
+  it("re-setting an existing key does not trigger eviction", () => {
+    const cache = createTtlCache<string>({ defaultTtlMs: 1000, maxSize: 2 });
+
+    cache.set("a", "1");
+    cache.set("b", "2");
+    cache.set("a", "updated"); // existing key -> no growth, no eviction
+
+    expect(cache.get("a")).toBe("updated");
+    expect(cache.get("b")).toBe("2");
+  });
+
+  describe("metrics (#284)", () => {
+    it("increments cache_hits_total on get() hit", () => {
+      const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
+      cache.set("k", "v");
+      cache.get("k");
+      expect(cacheHits.hashMap["cache:test,"]).toEqual({
+        value: 1,
+        labels: { cache: "test" },
+      });
+    });
+
+    it("increments cache_misses_total on get() miss", () => {
+      const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
+      cache.get("nonexistent");
+      expect(cacheMisses.hashMap["cache:test,"]).toEqual({
+        value: 1,
+        labels: { cache: "test" },
+      });
+    });
+
+    it("increments cache_misses_total on expired entry", () => {
+      const clock = fakeClock();
+      const cache = createTtlCache<string>({
+        defaultTtlMs: 100,
+        now: clock.now,
+        cacheName: "test",
+      });
+      cache.set("k", "v");
+      clock.advance(100);
+      cache.get("k");
+      expect(cacheMisses.hashMap["cache:test,"]).toEqual({
+        value: 1,
+        labels: { cache: "test" },
+      });
+    });
+
+    it("does not register metrics when cacheName is omitted", () => {
+      const cache = createTtlCache<string>({ defaultTtlMs: 1000 });
+      cache.set("k", "v");
+      cache.get("k");
+      cache.get("missing");
+      expect(Object.keys(cacheHits.hashMap)).toHaveLength(0);
+      expect(Object.keys(cacheMisses.hashMap)).toHaveLength(0);
+    });
+  });
+});

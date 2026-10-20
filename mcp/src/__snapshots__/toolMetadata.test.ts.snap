@@ -1,0 +1,242 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
+[
+  "mindvault_setup_wallet",
+  "mindvault_wallet_info",
+  "mindvault_repair_sponsored_account",
+  "mindvault_use_profile",
+  "mindvault_list_profiles",
+  "mindvault_switch_network_profile",
+  "mindvault_browse",
+  "mindvault_search",
+  "mindvault_preview",
+  "mindvault_register",
+  "mindvault_publish",
+  "mindvault_buy",
+  "mindvault_export_receipts",
+  "mindvault_register_onchain",
+  "mindvault_agent_status",
+  "mindvault_registry_info",
+  "mindvault_terms",
+  "mindvault_network_profile",
+  "mindvault_check_bindings",
+  "mindvault_check_consistency",
+  "mindvault_verify_attestation",
+  "mindvault_registry_lookup",
+  "mindvault_registry_list",
+  "mindvault_batch_catalog_lookup",
+  "mindvault_preview_metadata_hash",
+  "mindvault_registry_count",
+  "mindvault_tx_status",
+  "mindvault_reset",
+  "mindvault_backup_state",
+  "mindvault_resource_provenance",
+  "mindvault_resource_change_log",
+  "mindvault_restore_state",
+  "mindvault_metrics",
+  "mindvault_set_tags",
+  "mindvault_update_metadata",
+  "mindvault_set_price",
+  "mindvault_transfer_ownership",
+  "mindvault_accept_transfer",
+  "mindvault_cancel_transfer",
+  "mindvault_pending_transfer",
+  "mindvault_set_listed",
+  "mindvault_dispute",
+  "mindvault_check_state_permissions",
+  "mindvault_registry_health",
+  "mindvault_prewarm_catalog",
+  "mindvault_client_config",
+  "mindvault_mainnet_banner",
+  "mindvault_import_wallet",
+  "mindvault_rotate_publisher_key",
+  "mindvault_verify_install",
+  "mindvault_debug_bundle",
+  "mindvault_recover_catalog_cache",
+  "mindvault_publish_status",
+  "mindvault_purchase_history",
+  "mindvault_publish_batch",
+]
+`;
+
+exports[`MCP tool metadata > mindvault_publish inputSchema 1`] = `
+{
+  "properties": {
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
+    "description": {
+      "description": "Optional detailed description of the resource content. Example: 'A beginner-friendly guide covering Stellar's Federated Byzantine Agreement protocol.'",
+      "examples": [
+        "A beginner-friendly guide covering Stellar's Federated Byzantine Agreement protocol.",
+        "Step-by-step tutorial on building Soroban smart contracts with Rust.",
+      ],
+      "type": "string",
+    },
+    "dryRun": {
+      "description": "Optional dry-run flag. When true, validates inputs and shows intended network, endpoint, and required wallet state without submitting payment or transactions.",
+      "type": "boolean",
+    },
+    "externalUrl": {
+      "description": "Public URL buyers receive after payment. Example: 'https://docs.stellar.org/consensus'",
+      "examples": [
+        "https://docs.stellar.org/consensus",
+        "https://example.com/soroban-tutorial",
+        "https://stellar-anchor-guide.com",
+      ],
+      "type": "string",
+    },
+    "price": {
+      "description": "Price in USDC (decimal string). Example: '5.00' charges 5 USDC per access.",
+      "examples": [
+        "5.00",
+        "10.50",
+        "0.99",
+        "25.00",
+      ],
+      "type": "string",
+    },
+    "title": {
+      "description": "Resource title shown in the catalog (concise, descriptive). Example: 'Intro to Stellar Consensus'",
+      "examples": [
+        "Intro to Stellar Consensus",
+        "Soroban Smart Contract Tutorial",
+        "Stellar Anchor Guide",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "title",
+    "price",
+    "externalUrl",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`MCP tool metadata > mindvault_search inputSchema 1`] = `
+{
+  "properties": {
+    "limit": {
+      "description": "Max number of resources to return (1–100, server default 20).",
+      "examples": [
+        20,
+        50,
+      ],
+      "maximum": 100,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "listed": {
+      "description": "Filter by listing state. The public catalog is listed=true only; listed=false yields no public catalog matches (use mindvault_registry_lookup for a specific resource).",
+      "examples": [
+        true,
+        false,
+      ],
+      "type": "boolean",
+    },
+    "maxPrice": {
+      "description": "Maximum USDC price to include (decimal string). Example: '20.00' excludes resources priced above 20 USDC.",
+      "examples": [
+        "20.00",
+        "15.99",
+        "100.00",
+      ],
+      "type": "string",
+    },
+    "minPrice": {
+      "description": "Minimum USDC price to include (decimal string). Example: '5.00' includes resources priced 5 USDC and above.",
+      "examples": [
+        "5.00",
+        "10.50",
+        "0.50",
+      ],
+      "type": "string",
+    },
+    "offset": {
+      "description": "Number of resources to skip for pagination.",
+      "examples": [
+        0,
+        20,
+      ],
+      "minimum": 0,
+      "type": "integer",
+    },
+    "owner": {
+      "description": "Filter by publisher name or wallet address (case-insensitive substring). Example: 'Alice' or a G... Stellar address.",
+      "examples": [
+        "Alice",
+        "GB6LGS25...",
+      ],
+      "type": "string",
+    },
+    "query": {
+      "description": "Keyword(s) to match against resource title or description. Examples: 'Stellar tutorial', 'Soroban smart contracts', 'DeFi guide'",
+      "examples": [
+        "Stellar tutorial",
+        "Soroban smart contracts",
+        "DeFi guide",
+      ],
+      "type": "string",
+    },
+    "resourceType": {
+      "description": "Filter by resource type. 'file' = downloadable file (PDF, ebook, etc.), 'link' = external URL to web content.",
+      "enum": [
+        "file",
+        "link",
+      ],
+      "examples": [
+        "link",
+        "file",
+      ],
+      "type": "string",
+    },
+    "sort": {
+      "description": "Sort order for results. Defaults to newest when omitted.",
+      "enum": [
+        "newest",
+        "price_asc",
+        "price_desc",
+        "title",
+      ],
+      "examples": [
+        "newest",
+        "price_asc",
+        "price_desc",
+        "title",
+      ],
+      "type": "string",
+    },
+    "tags": {
+      "description": "Comma-separated discovery tags; resources must include all listed tags (matched client-side against tag fields on results). Example: 'dataset,research'.",
+      "examples": [
+        "dataset",
+        "dataset,research",
+      ],
+      "type": "string",
+    },
+    "verificationStatus": {
+      "description": "Filter by verification status. 'verified' = passed AI originality check, 'pending' = awaiting verification, 'rejected' = failed check, 'skipped' = verification skipped.",
+      "enum": [
+        "pending",
+        "verified",
+        "rejected",
+        "skipped",
+      ],
+      "examples": [
+        "verified",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;

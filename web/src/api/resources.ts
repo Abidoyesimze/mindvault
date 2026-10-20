@@ -1,9 +1,61 @@
-import { type Resource, networks } from "@mindvault/registry-client";
+import { type Resource, Networks } from "@mindvault/registry-client";
+import { signedPublisherFetch } from "./requestSignature.js";
 
 export type { Resource };
-export { networks as registryNetworks };
+export { Networks as registryNetworks };
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
+
+export interface CatalogFilters {
+  search?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  verificationStatus?: "all" | "verified" | "pending" | "rejected";
+  resourceType?: "all" | "file" | "link";
+}
+
+export interface ResourceMeta {
+  id: string;
+  title: string;
+  description?: string | null;
+  price: string;
+  resourceType: string;
+  mimeType?: string | null;
+  verificationStatus: string;
+  publisherName?: string;
+  publisherWallet: string;
+  onchainStatus: string;
+  onchainTxHash?: string | null;
+  contentHash?: string | null;
+  thumbnailUrl?: string | null;
+  createdAt: string;
+  accessUrl: string;
+}
+
+export async function fetchResourceMeta(id: string, signal?: AbortSignal): Promise<ResourceMeta> {
+  const res = await fetch(`${API_BASE}/resources/${id}/meta`, { signal });
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: undefined }));
+    throw new Error(error ?? "Failed to load resource preview");
+  }
+  return res.json();
+}
+
+export async function fetchCatalog(filters?: CatalogFilters): Promise<any[]> {
+  const params = new URLSearchParams();
+  if (filters?.search) params.set("search", filters.search);
+  if (filters?.minPrice) params.set("minPrice", filters.minPrice);
+  if (filters?.maxPrice) params.set("maxPrice", filters.maxPrice);
+  if (filters?.verificationStatus && filters.verificationStatus !== "all")
+    params.set("verificationStatus", filters.verificationStatus);
+  if (filters?.resourceType && filters.resourceType !== "all")
+    params.set("resourceType", filters.resourceType);
+
+  const qs = params.toString();
+  const res = await fetch(`${API_BASE}/resources${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("Failed to fetch catalog");
+  return res.json();
+}
 
 export async function fetchMyResources(apiKey: string): Promise<any[]> {
   const res = await fetch(`${API_BASE}/publishers/me/resources`, {
@@ -36,13 +88,10 @@ export async function submitRegister(
   signedXdr: string,
   apiKey: string,
 ): Promise<{ id: string; onchainStatus: string; onchainTxHash?: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/register`, {
+  const body = JSON.stringify({ signedXdr });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/register`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr }),
+    body,
   });
   if (!res.ok) {
     const { error } = await res.json();
@@ -75,22 +124,57 @@ export async function prepareRegisterTx(
   return res.json();
 }
 
+/**
+ * Error thrown when on-chain registration fails. Carries the structured
+ * recovery guidance the server returns (next steps, retry endpoint, and a
+ * transaction hash / explorer link when a transaction was broadcast) so the UI
+ * can show the creator exactly how to recover.
+ */
+export class RegistrationError extends Error {
+  txHash?: string;
+  txStatusUrl?: string;
+  nextSteps?: string[];
+  retryEndpoint?: string;
+
+  constructor(
+    message: string,
+    details: {
+      txHash?: string;
+      txStatusUrl?: string;
+      nextSteps?: string[];
+      retryEndpoint?: string;
+    } = {},
+  ) {
+    super(message);
+    this.name = "RegistrationError";
+    this.txHash = details.txHash;
+    this.txStatusUrl = details.txStatusUrl;
+    this.nextSteps = details.nextSteps;
+    this.retryEndpoint = details.retryEndpoint;
+  }
+}
+
 export async function submitRegisterTx(
   resourceId: string,
   signedXdr: string,
   apiKey: string,
 ): Promise<{ id: string; onchainStatus: string; txHash: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/register`, {
+  const body = JSON.stringify({ signedXdr });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/register`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr }),
+    body,
   });
   if (!res.ok) {
-    const { error } = await res.json();
-    throw new Error(error ?? "Failed to submit register transaction");
+    const body = await res.json().catch(() => ({}));
+    throw new RegistrationError(
+      body.message ?? body.error ?? "Failed to submit register transaction",
+      {
+        txHash: body.txHash,
+        txStatusUrl: body.txStatusUrl,
+        nextSteps: body.nextSteps,
+        retryEndpoint: body.retryEndpoint,
+      },
+    );
   }
   return res.json();
 }
@@ -100,14 +184,12 @@ export async function prepareSetPrice(
   price: string,
   apiKey: string,
 ): Promise<{ unsignedXdr: string; networkPassphrase: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/price/prepare`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ price }),
-  });
+  const body = JSON.stringify({ price });
+  const res = await signedPublisherFetch(
+    `${API_BASE}/resources/${resourceId}/price/prepare`,
+    apiKey,
+    { method: "POST", body },
+  );
   if (!res.ok) {
     const { error } = await res.json();
     throw new Error(error ?? "Failed to prepare transaction");
@@ -126,14 +208,12 @@ export async function prepareTransferOwnership(
   newCreator: string,
   apiKey: string,
 ): Promise<{ unsignedXdr: string; networkPassphrase: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/ownership/prepare`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ newCreator }),
-  });
+  const body = JSON.stringify({ newCreator });
+  const res = await signedPublisherFetch(
+    `${API_BASE}/resources/${resourceId}/ownership/prepare`,
+    apiKey,
+    { method: "POST", body },
+  );
   if (!res.ok) {
     const { error } = await res.json();
     throw new Error(error ?? "Failed to prepare transfer transaction");
@@ -147,17 +227,68 @@ export async function submitTransferOwnership(
   newCreator: string,
   apiKey: string,
 ): Promise<{ id: string; newCreator: string; status: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/ownership`, {
+  const body = JSON.stringify({ signedXdr, newCreator });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/ownership`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr, newCreator }),
+    body,
   });
   if (!res.ok) {
     const { error } = await res.json();
     throw new Error(error ?? "Failed to submit transfer transaction");
+  }
+  return res.json();
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  name: string;
+  walletAddress: string;
+  joinedAt: string;
+  totalResources: number;
+  listedResources: number;
+  verifiedResources: number;
+  totalSales: number;
+  totalEarned: string;
+}
+
+export async function fetchLeaderboard(signal?: AbortSignal): Promise<LeaderboardEntry[]> {
+  const res = await fetch(`${API_BASE}/publishers/leaderboard`, { signal });
+  if (!res.ok) throw new Error("Failed to fetch leaderboard");
+  return res.json();
+}
+
+export async function publishLinkResource(
+  data: { title: string; description?: string; price: string; externalUrl: string },
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/resources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+    body: JSON.stringify(data),
+    signal,
+  });
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: undefined }));
+    throw new Error(error ?? "Failed to publish resource");
+  }
+  return res.json();
+}
+
+export async function publishFileResource(
+  formData: FormData,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/resources`, {
+    method: "POST",
+    headers: { "x-api-key": apiKey },
+    body: formData,
+    signal,
+  });
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: undefined }));
+    throw new Error(error ?? "Failed to publish resource");
   }
   return res.json();
 }
@@ -168,13 +299,10 @@ export async function submitSetPrice(
   price: string,
   apiKey: string,
 ): Promise<{ id: string; price: string; status: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/price`, {
+  const body = JSON.stringify({ signedXdr, price });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/price`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr, price }),
+    body,
   });
   if (!res.ok) {
     const { error } = await res.json();

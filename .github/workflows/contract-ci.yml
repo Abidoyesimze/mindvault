@@ -6,34 +6,200 @@ on:
     branches: [main]
 
 jobs:
+  fmt:
+    name: Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contract/target
+          key: ${{ runner.os }}-contract-fmt-${{ hashFiles('contract/Cargo.toml', 'contract/Cargo.lock', 'contract/contracts/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-contract-fmt-
+            ${{ runner.os }}-cargo-
+
+      - name: Check Rust formatting
+        working-directory: contract
+        run: cargo fmt --check
+
   build-and-test:
     name: Build & Test Contract
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown,wasm32v1-none
+          components: rust-src
 
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             contract/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
+          key: ${{ runner.os }}-contract-wasm-${{ hashFiles('contract/Cargo.toml', 'contract/Cargo.lock', 'contract/contracts/**/Cargo.toml') }}
           restore-keys: |
+            ${{ runner.os }}-contract-wasm-
             ${{ runner.os }}-cargo-
 
-      - name: Build contract
+      - name: Install Stellar CLI
+        run: |
+          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Build optimized wasm contract
         working-directory: contract
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: stellar contract build --manifest-path Cargo.toml --optimize
+
+      - name: Enforce WASM size budget
+        working-directory: contract
+        run: |
+          WASM_FILE="target/wasm32v1-none/release/vault_registry.wasm"
+          # 112 KB. Raised from 96 KB when time-limited access leases (eight
+          # methods, three types), the anchor attempt cap and back-off, and
+          # the cursor-based *_page listings landed: the optimized WASM went
+          # from ~91 KB to ~107 KB, almost all of it contract spec entries and
+          # the XDR conversions generated for the new types. The 96 KB figure
+          # had itself been raised from 36 KB, which was set against a snapshot
+          # from before the lifecycle state machine, moderator role and dispute
+          # flags, fee config, tag index and its repair, network guard, payment
+          # receipts and the settler role, purchase receipt anchoring, and the
+          # emergency pause all merged. The release profile already uses
+          # opt-level "z", LTO, one codegen unit and stripped symbols.
+          MAX_SIZE=114688
+          SIZE=$(stat -c%s "$WASM_FILE")
+          echo "WASM Size: $SIZE bytes"
+          if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+            echo "::error::WASM size ($SIZE bytes) exceeds the maximum allowed budget ($MAX_SIZE bytes). Please optimize or explicitly update the budget if this growth is expected."
+            exit 1
+          fi
+
+      # Complements the hard budget check above: that one only catches an
+      # absolute overage, so a build that grows 20% but stays under the cap
+      # sails through silently. This restores the last size recorded on
+      # main (if any) from cache and reports the delta, warning on a large
+      # jump so growth trends are visible before they ever approach the cap.
+      - name: Restore WASM size baseline
+        id: wasm-size-baseline
+        uses: actions/cache/restore@v6
+        with:
+          path: contract/.wasm-size-baseline
+          key: wasm-size-baseline-main-${{ github.sha }}
+          restore-keys: |
+            wasm-size-baseline-main-
+
+      - name: Check WASM size trend
+        working-directory: contract
+        run: |
+          WASM_FILE="target/wasm32v1-none/release/vault_registry.wasm"
+          SIZE=$(stat -c%s "$WASM_FILE")
+          BASELINE_FILE=".wasm-size-baseline"
+          WARN_PCT=5
+
+          {
+            echo "### WASM Size Trend"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f "$BASELINE_FILE" ]; then
+            BASELINE=$(cat "$BASELINE_FILE")
+            DELTA=$((SIZE - BASELINE))
+            if [ "$BASELINE" -gt 0 ]; then
+              PCT=$(awk -v d="$DELTA" -v b="$BASELINE" 'BEGIN { printf "%.2f", (d / b) * 100 }')
+            else
+              PCT="0.00"
+            fi
+            echo "WASM size trend vs. main baseline: ${BASELINE} -> ${SIZE} bytes (Δ ${DELTA} bytes, ${PCT}%)"
+            {
+              echo "- Baseline (main): ${BASELINE} bytes"
+              echo "- Current: ${SIZE} bytes"
+              echo "- Delta: ${DELTA} bytes (${PCT}%)"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if awk -v p="$PCT" -v w="$WARN_PCT" 'BEGIN { exit !(p > w) }'; then
+              echo "::warning::WASM size grew ${PCT}% versus the main baseline (${BASELINE} -> ${SIZE} bytes). Verify this growth is expected."
+            fi
+          else
+            echo "No WASM size baseline recorded yet; this build will seed it on merge to main."
+            echo "- No baseline yet. Current size: ${SIZE} bytes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save WASM size baseline
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: contract
+        run: stat -c%s target/wasm32v1-none/release/vault_registry.wasm > .wasm-size-baseline
+
+      - name: Persist WASM size baseline
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v6
+        with:
+          path: contract/.wasm-size-baseline
+          key: wasm-size-baseline-main-${{ github.sha }}
+
+      - name: Upload wasm artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vault-registry-wasm
+          path: contract/target/wasm32v1-none/release/*.wasm
+          if-no-files-found: error
 
       - name: Run tests
         working-directory: contract
         run: cargo test
+
+      - name: Refresh storage footprint report
+        working-directory: contract/contracts/vault-registry
+        run: make footprint
+
+  no-std-check:
+    name: Check no_std Compatibility
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,wasm32v1-none
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contract/target
+          key: ${{ runner.os }}-contract-no-std-${{ hashFiles('contract/Cargo.toml', 'contract/Cargo.lock', 'contract/contracts/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-contract-no-std-
+            ${{ runner.os }}-contract-wasm-
+            ${{ runner.os }}-cargo-
+
+      - name: Check no_std compatibility
+        working-directory: contract
+        run: |
+          # Build with default features only to ensure no std dependencies
+          cargo build --release --target wasm32-unknown-unknown --no-default-features
+          # Verify the contract still builds with standard features
+          cargo build --release --target wasm32-unknown-unknown

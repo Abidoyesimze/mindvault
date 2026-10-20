@@ -4,3 +4,20 @@ dist
 contract/target
 server/dist
 web/dist
+
+# Compiled output committed alongside the source vitest.config.ts
+packages/registry-client/vitest.config.js
+packages/registry-client/vitest.config.d.ts
+
+ fix/418-mcp-add-mcp-catalog-search-filters-parity
+# Generated Soroban bindings — do not reformat
+
+# Generated Soroban client bindings (regenerated from contract)
+packages/registry-client/src/generated/**
+# Generated Soroban bindings — do not hand-format
+ main
+packages/registry-client/src/generated/
+
+# Hand-aligned method/event tables that contract tests parse; not prettier-formatted on
+# main and outside the CI prettier globs, so the commit hook must not reflow them.
+contract/README.md

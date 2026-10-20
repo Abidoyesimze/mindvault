@@ -1,0 +1,8 @@
+{
+  // Build configuration: the same compiler options as tsconfig.json, minus the
+  // tests. tsconfig.json still includes them so editors, `tsc --noEmit`, and
+  // type-aware lint rules cover test files; this config keeps them out of
+  // dist/, which is what gets published.
+  "extends": "./tsconfig.json",
+  "exclude": ["src/**/*.test.ts"]
+}

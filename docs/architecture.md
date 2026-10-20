@@ -18,14 +18,20 @@ Two distinct concerns sit at the heart of MindVault: **who gets paid and how**, 
 │  Resource {               │
 │    id       string        │
 │    creator  Address       │  owner, enforced by require_auth
-│    price    i128          │  USDC stroops (7 decimals)
+│    price    i128          │  USDC base units (7 decimals)
 │    metadata string        │  IPFS URI / content hash
 │    listed   bool          │
+│    tags     Vec<String>   │  discovery labels
+│    verified VerifStatus   │  Pending|Verified|Rejected, set by a verifier
+│    frozen   bool          │  once true, metadata is immutable
 │  }                        │
 │                           │
 │  list(start, limit)       │  paginated read — build catalogs
 │  get(id)                  │  point read
 │  count()                  │  total registrations
+│                           │
+│  admin (nominate/accept)  │  grants/revokes the verifier role,
+│  verifier role            │  repairs the pagination index
 └───────────────────────────┘
         │
         │  2. Server reads price + owner from contract
@@ -80,22 +86,33 @@ When a buyer (human or AI agent) requests a paywalled resource:
 
 The vault-registry is a Soroban smart contract deployed on Stellar. It is the **single, permissionless source of truth** for:
 
-| Property | Meaning |
-|----------|---------|
-| `creator` | Stellar address that owns the resource; the only key allowed to mutate it |
-| `price` | Current access price in USDC stroops (1 USDC = 10 000 000 stroops) |
-| `metadata` | Content pointer — typically an IPFS URI or SHA-256 content hash |
-| `listed` | Whether the resource is publicly discoverable |
+| Property   | Meaning                                                                                   |
+| ---------- | ----------------------------------------------------------------------------------------- |
+| `creator`  | Stellar address that owns the resource; the only key allowed to mutate it                 |
+| `price`    | Current access price in USDC base units (1 USDC = 10 000 000 base units)                  |
+| `metadata` | Content pointer — typically an IPFS URI or SHA-256 content hash                           |
+| `listed`   | Whether the resource is publicly discoverable                                             |
+| `verified` | On-chain mirror of the server's verification result: `Pending`, `Verified`, or `Rejected` |
+| `frozen`   | Once `true`, `metadata` can never be changed again                                        |
 
 Anyone can read this data directly from the Soroban RPC without going through the MindVault API. The `list(start, limit)` method returns pages of resources in insertion order, enabling a full catalog to be built from chain with no off-chain index.
 
-Mutations (`register`, `set_price`, `update_metadata`, `transfer_ownership`, `set_listed`) all require the creator's Soroban `require_auth` signature. The server builds unsigned transactions that the creator signs client-side; the platform key never touches a creator's funds or ownership.
+Mutations (`register`, `set_price`, `update_metadata`, `set_tags`, `transfer_ownership`, `set_listed`, `freeze_metadata`) all require the creator's Soroban `require_auth` signature. Attempting to transfer ownership to the current owner is protected against and will return a deterministic error. The server builds unsigned transactions that the creator signs client-side; the platform key never touches a creator's funds or ownership.
 
 **Key properties of this layer:**
 
 - Ownership is on-chain and enforced cryptographically — MindVault cannot reassign a resource without the creator's signature.
 - The price the buyer actually pays (read from the contract at 402 time) is the canonical price, not a server-side value that could diverge silently.
-- The `metadata` field anchors content integrity: storing a content hash here lets any client verify the delivered bytes against the registry entry.
+- The `metadata` field anchors content integrity: storing a content hash here lets any client verify the delivered bytes against the registry entry. `freeze_metadata` lets a creator make that pointer permanent for marketplaces that need immutability guarantees.
+
+### Roles: admin and verifier
+
+Two roles exist alongside the per-resource `creator`:
+
+- **admin** — set via `nominate_new_admin`/`accept_admin` (a two-step handoff: the current admin nominates a successor, who must accept before the change takes effect). The admin can grant or revoke the **verifier** role and can repair the pagination index (`repair_index`, see [`index-repair.md`](index-repair.md)). The admin cannot touch any resource's price, metadata, listing, tags, or ownership.
+- **verifier** — any number of addresses the admin grants via `add_verifier`. A verifier's only privilege is `set_verification_status`, which mirrors the server's AI-originality check result on-chain so any client can filter or audit "verified" resources without trusting the MindVault API. Only `Pending→Verified`, `Pending→Rejected`, `Verified→Rejected`, and `Rejected→Verified` transitions are allowed — self-transitions and reverting to `Pending` are rejected deterministically, and every transition emits both the old and new status.
+
+Both roles are intentionally narrow: neither can move funds, change a resource's price or metadata, or reassign ownership. They only gate the two orthogonal, non-financial concerns of on-chain verification state and index integrity.
 
 ---
 
@@ -139,4 +156,6 @@ Commit the updated `packages/registry-client/src/generated/index.ts` so all cons
 - [x402 buy/pay sequence diagram](x402-sequence-diagram.md) — step-by-step walkthrough of the payment flow
 - [Soroban contract source](../contract/contracts/vault-registry/)
 - [Reconciliation runbook](reconciliation.md) — detecting drift between the server DB and the on-chain registry
+- [Owner index repair ADR](index-repair.md) — repairing the on-chain pagination index if it drifts from `Resource` storage
+- [Tag index repair design](tag-index-repair-design.md) — the repair contract a future on-chain tag index must satisfy
 - [Creator-signed registration flow](creator-signed-registration-flow.md)
