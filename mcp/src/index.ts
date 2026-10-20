@@ -159,6 +159,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
+import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
   exportStateFile,
@@ -1022,9 +1023,7 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
   const reserve = baseReserve + subentryCount * entryReserve;
   const available = Math.max(0, parseFloat(xlm) - reserve);
 
-  const usdcBalance = balances.find(
-    (b: any) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC",
-  );
+  const usdcBalance = findCanonicalUsdc(balances, networkPreset.usdcClassicIssuer);
 
   if (!usdcBalance) {
     return {
@@ -1102,7 +1101,7 @@ async function getAccountBalances(
   if (!res.ok) return { usdc: "0", native: "0", funded: false };
   const data: any = await res.json();
   const balances: any[] = data.balances ?? [];
-  const usdc = balances.find((b) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC");
+  const usdc = findCanonicalUsdc(balances, networkPreset.usdcClassicIssuer);
   const native = balances.find((b) => b.asset_type === "native");
   return { usdc: usdc?.balance ?? "0", native: native?.balance ?? "0", funded: true };
 }
