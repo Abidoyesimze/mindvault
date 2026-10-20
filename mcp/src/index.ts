@@ -124,16 +124,74 @@ async function walletInfo(): Promise<string> {
   return `Address: ${wallet.publicKey}\nUSDC Balance: ${balance}`;
 }
 
-async function browse(): Promise<string> {
-  const res = await jsonFetch(`${BASE_URL}/resources`);
+async function browse(args: { cursor?: string; limit?: number } = {}): Promise<string> {
+  const params = new URLSearchParams();
+  if (args.cursor) params.set("cursor", args.cursor);
+  if (typeof args.limit === "number") params.set("limit", String(args.limit));
+  const qs = params.toString();
+  const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
+  const res = await jsonFetch(url);
   if (!res.ok) throw new Error(`Browse failed: ${JSON.stringify(res.data)}`);
-  const items: any[] = res.data;
-  if (items.length === 0) return "No resources listed yet.";
-  return items
+  const data = res.data;
+  const items: any[] = Array.isArray(data) ? data : data?.items ?? [];
+  if (items.length === 0) {
+    const hasNext = !Array.isArray(data) && data?.nextCursor;
+    return hasNext ? `No more resources.\nnextCursor: ${data.nextCursor}` : "No resources listed yet.";
+  }
+  const lines = items
     .map(
       (r) => `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`,
     )
     .join("\n\n");
+  if (!Array.isArray(data) && data?.nextCursor) {
+    return `${lines}\n\nnextCursor: ${data.nextCursor}`;
+  }
+  return lines;
+}
+
+async function catalogCompare(args: {
+  testnetUrl?: string;
+  mainnetUrl?: string;
+}): Promise<string> {
+  const testnet = args.testnetUrl ?? BASE_URL;
+  const mainnet = args.mainnetUrl ?? process.env.MINDVAULT_MAINNET_URL;
+  if (!mainnet) throw new Error("mainnetUrl or MINDVAULT_MAINNET_URL required");
+
+  const [tRes, mRes] = await Promise.all([
+    jsonFetch(`${testnet.replace(/\/$/, "")}/resources`),
+    jsonFetch(`${mainnet.replace(/\/$/, "")}/resources`),
+  ]);
+  if (!tRes.ok) throw new Error(`testnet catalog fetch failed: ${tRes.status}`);
+  if (!mRes.ok) throw new Error(`mainnet catalog fetch failed: ${mRes.status}`);
+
+  const tItems: any[] = Array.isArray(tRes.data) ? tRes.data : tRes.data?.items ?? [];
+  const mItems: any[] = Array.isArray(mRes.data) ? mRes.data : mRes.data?.items ?? [];
+  const tMap = new Map(tItems.map((r) => [r.id, r]));
+  const mMap = new Map(mItems.map((r) => [r.id, r]));
+
+  const onlyTestnet = [...tMap.keys()].filter((k) => !mMap.has(k));
+  const onlyMainnet = [...mMap.keys()].filter((k) => !tMap.has(k));
+  const both = [...tMap.keys()].filter((k) => mMap.has(k));
+  const diffs: string[] = [];
+  for (const id of both) {
+    const t = tMap.get(id);
+    const m = mMap.get(id);
+    if (t.price !== m.price || t.title !== m.title) {
+      diffs.push(
+        `DIFF ${id}: testnet(title=${t.title},price=$${t.price}) mainnet(title=${m.title},price=$${m.price})`,
+      );
+    }
+  }
+
+  const lines = [
+    "catalog_compare",
+    `testnet: ${testnet} (${tItems.length} items)`,
+    `mainnet: ${mainnet} (${mItems.length} items)`,
+    `only_testnet: ${onlyTestnet.length ? onlyTestnet.join(",") : "-"}`,
+    `only_mainnet: ${onlyMainnet.length ? onlyMainnet.join(",") : "-"}`,
+    diffs.length ? diffs.join("\n") : "diffs: none",
+  ];
+  return lines.join("\n");
 }
 
 async function preview(resourceId: string): Promise<string> {
@@ -252,10 +310,10 @@ async function publish(args: {
     .join("\n");
 }
 
-async function buy(resourceId: string): Promise<string> {
+async function buy(resourceId: string, signal?: AbortSignal): Promise<string> {
   const wallet = requireWallet();
   const paidFetch = makePaidFetch(wallet);
-  const res = await paidFetch(`${BASE_URL}/resources/${resourceId}`);
+  const res = await paidFetch(`${BASE_URL}/resources/${resourceId}`, { signal } as RequestInit);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Buy failed [${res.status}]: ${text}`);
@@ -302,8 +360,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mindvault_browse",
-      description: "List all available resources in the MindVault catalog.",
-      inputSchema: { type: "object", properties: {}, required: [] },
+      description: "List available resources in the MindVault catalog with pagination.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          cursor: { type: "string", description: "Resumable cursor from previous page" },
+          limit: { type: "number", description: "Max items per page (capped server-side)" },
+        },
+        required: [],
+      },
+    },
+    {
+      name: "mindvault_catalog_compare",
+      description: "Compare catalog resources across testnet and mainnet profiles.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          testnetUrl: { type: "string" },
+          mainnetUrl: { type: "string" },
+        },
+        required: [],
+      },
     },
     {
       name: "mindvault_preview",
@@ -387,7 +464,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await walletInfo();
         break;
       case "mindvault_browse":
-        result = await browse();
+        result = await browse({
+          cursor: args.cursor as string | undefined,
+          limit: args.limit as number | undefined,
+        });
+        break;
+      case "mindvault_catalog_compare":
+        result = await catalogCompare({
+          testnetUrl: args.testnetUrl as string | undefined,
+          mainnetUrl: args.mainnetUrl as string | undefined,
+        });
         break;
       case "mindvault_preview":
         result = await preview(args.resourceId as string);

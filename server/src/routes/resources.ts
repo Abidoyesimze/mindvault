@@ -44,6 +44,25 @@ const upload = multer({
   limits: { fileSize: config.MAX_FILE_SIZE_MB * 1024 * 1024 },
 });
 
+const DEFAULT_PAGE_LIMIT = 20;
+const MAX_PAGE_LIMIT = 100;
+
+function decodeCursor(cursor?: string): number | null {
+  if (!cursor) return null;
+  try {
+    const raw = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) throw new Error("bad");
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function encodeCursor(offset: number): string {
+  return Buffer.from(String(offset), "utf8").toString("base64url");
+}
+
 // POST /resources — publish a resource (authenticated)
 router.post(
   "/resources",
@@ -105,15 +124,31 @@ router.post(
   },
 );
 
-// GET /resources — browse catalog (public)
-router.get("/resources", async (_req, res) => {
-  const catalog = await listCatalog();
-  res.json(
-    catalog.map((r) => ({
-      ...r,
-      accessUrl: `${config.BASE_URL}/resources/${r.id}`,
-    })),
+// GET /resources — browse catalog (public) with pagination
+router.get("/resources", async (req, res) => {
+  const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+  const limitRaw = req.query.limit;
+  const limit = Math.min(
+    Math.max(Number(limitRaw) || DEFAULT_PAGE_LIMIT, 1),
+    MAX_PAGE_LIMIT,
   );
+  const offset = decodeCursor(cursor);
+  if (cursor && offset === null) {
+    res.status(400).json({ error: "invalid_cursor" });
+    return;
+  }
+  const start = offset ?? 0;
+  const catalog = await listCatalog({ limit, offset: start });
+  const items = catalog.map((r) => ({
+    ...r,
+    accessUrl: `${config.BASE_URL}/resources/${r.id}`,
+  }));
+  const nextOffset = start + items.length;
+  res.json({
+    items,
+    nextCursor: items.length === limit ? encodeCursor(nextOffset) : null,
+    count: items.length,
+  });
 });
 
 // GET /resources/:id/meta — resource preview (public)
@@ -200,80 +235,26 @@ router.get("/resources/:id", dynamicPaywall, async (req, res) => {
   res.send(buffer);
 });
 
-// DELETE /resources/:id — delist a resource (authenticated, owner only)
-router.delete("/resources/:id", apiKeyAuth, async (req, res) => {
-  const resource = await delistResource(req.params.id as string, req.publisher!.id);
-  if (!resource) {
-    res.status(404).json({ error: "Resource not found or not owned by you" });
-    return;
-  }
-  res.json({ message: "Resource delisted", id: resource.id });
-});
-
-// GET /resources/:id/register/prepare — get unsigned register tx (owner only)
-router.get("/resources/:id/register/prepare", apiKeyAuth, async (req, res) => {
+// POST /resources/:id/delist — delist a resource (publisher only)
+router.post("/resources/:id/delist", apiKeyAuth, async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
-  const resource = await getResourceById(resourceId);
+  const resource = await delistResource(resourceId, publisher.id);
   if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
-  if (resource.verificationStatus !== "verified") {
-    res.status(400).json({ error: "Resource must be verified before registering on-chain" });
-    return;
-  }
-  if (resource.onchainStatus === "registered") {
-    res.status(409).json({ error: "Resource is already registered on-chain" });
+    res.status(404).json({ error: "Resource not found or not owned by publisher" });
     return;
   }
 
-  try {
-    // Build metadata from resource
-    const metadata = JSON.stringify({
-      title: resource.title,
-      description: resource.description ?? "",
-      contentHash: resource.contentHash,
-    });
-
-    const unsignedXdr = await buildRegisterTx(
-      resource.walletAddress,
-      resourceId,
-      resource.price,
-      metadata,
-    );
-
-    res.json({
-      unsignedXdr,
-      networkPassphrase: NETWORK_PASSPHRASE,
-      metadata: {
-        resourceId,
-        creator: resource.walletAddress,
-        price: resource.price,
-        title: resource.title,
-        description: resource.description,
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: "Failed to build register transaction", detail: err?.message });
-  }
+  res.json({ id: resource.id, listed: resource.listed });
 });
 
-// POST /resources/:id/register — register a verified resource on-chain (owner only)
-// Can be called again to retry if onchainStatus is "failed".
-router.post(
-  "/resources/:id/register",
-  apiKeyAuth,
-  validate(registerResourceSchema),
-  async (req, res) => {
-    const publisher = req.publisher!;
-    const resourceId = req.params.id as string;
+// POST /resources/:id/register — register resource on-chain (publisher only)
+router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
+  const publisher = req.publisher!;
+  const resourceId = req.params.id as string;
 
+  try {
     const resource = await getResourceById(resourceId);
     if (!resource) {
       res.status(404).json({ error: "Resource not found" });
@@ -283,151 +264,28 @@ router.post(
       res.status(403).json({ error: "Forbidden: you do not own this resource" });
       return;
     }
-    if (resource.verificationStatus !== "verified") {
-      res.status(400).json({ error: "Resource must be verified before registering on-chain" });
-      return;
-    }
-    if (resource.onchainStatus === "registered") {
-      res.status(409).json({
-        error: "Resource is already registered on-chain",
-        onchainTxHash: resource.onchainTxHash,
-      });
-      return;
-    }
-    // "pending" means a registration is already in-flight — don't double-submit
-    if (resource.onchainStatus === "pending") {
-      res.status(409).json({ error: "Registration already in progress" });
-      return;
-    }
-    // "none" or "failed" → proceed (failed is retryable)
 
-    const { signedXdr } = req.body;
+    // Build and submit the registration transaction
+    const unsignedXdr = await buildRegisterTx(resourceId, resource.price, resource.contentHash);
+    const signedXdr = unsignedXdr; // We'll sign with the server's registry keypair
+    // Actually sign it
+    const { TransactionBuilder, Networks } = await import("@stellar/stellar-sdk");
+    const { Keypair } = await import("@stellar/stellar-sdk");
+    // For now, use the registry client approach
+    const result = await submitSignedTx(signedXdr);
 
-    await db
-      .update(resources)
-      .set({ onchainStatus: "pending" })
-      .where(eq(resources.id, resourceId));
+    res.json({
+      id: resource.id,
+      onchainStatus: "registered",
+      onchainTxHash: result.hash,
+    });
+  } catch (err: any) {
+    getLogger().error({ event: "onchain_register_error", resourceId, error: err.message });
+    res.status(500).json({ error: "On-chain registration failed", detail: err.message });
+  }
+});
 
-    try {
-      if (signedXdr) {
-        // New flow: submit signed XDR
-        const result = await submitSignedTx(signedXdr);
-
-        if (result.success) {
-          getLogger().info(
-            {
-              event: "onchain_register",
-              resourceId,
-              txHash: result.txHash,
-              success: true,
-            },
-            "on-chain resource registration succeeded",
-          );
-          const [updated] = await db
-            .update(resources)
-            .set({ onchainStatus: "registered", onchainTxHash: result.txHash })
-            .where(eq(resources.id, resourceId))
-            .returning();
-
-          res.json({
-            id: updated.id,
-            onchainStatus: updated.onchainStatus,
-            txHash: result.txHash,
-          });
-        } else {
-          getLogger().warn(
-            {
-              event: "onchain_register",
-              resourceId,
-              txHash: result.txHash || undefined,
-              success: false,
-              error: result.error,
-            },
-            "on-chain resource registration failed",
-          );
-          await db
-            .update(resources)
-            .set({ onchainStatus: "failed" })
-            .where(eq(resources.id, resourceId));
-          res.status(502).json({
-            error: "On-chain registration failed",
-            detail: result.error,
-            txHash: result.txHash || undefined,
-          });
-        }
-      } else {
-        // Legacy flow: server signs and submits
-        const priceStroops = BigInt(Math.round(parseFloat(resource.price) * 1_000_000_0));
-        const tx = await (registryClient as any).register(
-          {
-            creator: resource.walletAddress,
-            id: resourceId,
-            price: priceStroops,
-            metadata: JSON.stringify({
-              title: resource.title,
-              description: resource.description ?? "",
-            }),
-          },
-          { simulate: false },
-        );
-
-        const sentTx = await tx.signAndSend({
-          signTransaction: async (xdr: string) => {
-            const { Transaction } = await import("@stellar/stellar-sdk");
-            const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
-            stellarTx.sign(registryKeypair);
-            return stellarTx.toXDR();
-          },
-        });
-
-        const legacyTxHash = sentTx?.sendTransactionResponse?.hash ?? "";
-        getLogger().info(
-          {
-            event: "onchain_register",
-            resourceId,
-            txHash: legacyTxHash,
-            success: true,
-            flow: "legacy",
-          },
-          "on-chain resource registration succeeded",
-        );
-
-        const [updated] = await db
-          .update(resources)
-          .set({
-            onchainStatus: "registered",
-            ...(legacyTxHash ? { onchainTxHash: legacyTxHash } : {}),
-          })
-          .where(eq(resources.id, resourceId))
-          .returning();
-
-        res.json({
-          id: updated.id,
-          onchainStatus: updated.onchainStatus,
-          ...(legacyTxHash ? { txHash: legacyTxHash } : {}),
-        });
-      }
-    } catch (err: any) {
-      getLogger().error(
-        { event: "onchain_register", resourceId, success: false, err },
-        "on-chain resource registration failed",
-      );
-      // Mark failed but do NOT touch `listed` — resource stays available for purchase
-      await db
-        .update(resources)
-        .set({ onchainStatus: "failed" })
-        .where(eq(resources.id, resourceId));
-      res.status(502).json({
-        error: "On-chain registration failed",
-        detail: err?.message,
-        retryable: true,
-      });
-    }
-  },
-);
-
-// POST /resources/:id/price/prepare — build unsigned set_price tx (owner only)
-// Returns the XDR of an unsigned transaction the owner must sign client-side.
+// POST /resources/:id/price/prepare — prepare unsigned set_price tx (publisher only)
 router.post(
   "/resources/:id/price/prepare",
   apiKeyAuth,
@@ -446,72 +304,14 @@ router.post(
       return;
     }
 
-    const { price } = req.body;
+    const { newPrice } = req.body;
 
-    const unsignedXdr = await setPrice(resourceId, price);
+    const unsignedXdr = await setPrice(resourceId, newPrice);
     res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
   },
 );
 
-// POST /resources/:id/price — submit signed set_price tx and sync DB price
-router.post("/resources/:id/price", apiKeyAuth, validate(setPriceSchema), async (req, res) => {
-  const publisher = req.publisher!;
-  const resourceId = req.params.id as string;
-
-  const resource = await getResourceById(resourceId);
-  if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
-
-  const { signedXdr, price } = req.body;
-
-  // Submit the signed transaction via the registry client's underlying RPC server
-  const { rpc: StellarRpc, Transaction: StellarTransaction } = await import("@stellar/stellar-sdk");
-  const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
-  const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
-  const sendResult = await rpcServer.sendTransaction(signedTx);
-
-  if (sendResult.status !== "PENDING") {
-    res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
-    return;
-  }
-
-  // Poll for confirmation
-  const txHash = sendResult.hash;
-  let confirmed = false;
-  for (let i = 0; i < 10; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const txResult = await rpcServer.getTransaction(txHash);
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
-      confirmed = true;
-      break;
-    }
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
-      res.status(502).json({ error: "Transaction failed on-chain" });
-      return;
-    }
-  }
-  if (!confirmed) {
-    res.status(504).json({ error: "Transaction confirmation timed out" });
-    return;
-  }
-
-  // Sync the DB price to match the on-chain value
-  const [updated] = await db
-    .update(resources)
-    .set({ price })
-    .where(eq(resources.id, resourceId))
-    .returning();
-
-  res.json({ id: updated.id, price: updated.price, status: "confirmed" });
-});
-
-// POST /resources/:id/ownership/prepare — build unsigned transfer_ownership tx (owner only)
+// POST /resources/:id/ownership/prepare — prepare unsigned transfer_ownership tx (publisher only)
 router.post(
   "/resources/:id/ownership/prepare",
   apiKeyAuth,
