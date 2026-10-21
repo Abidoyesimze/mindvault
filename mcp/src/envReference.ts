@@ -134,6 +134,13 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     default: `${DEFAULT_MAX_ATTEMPTS} (unlimited)`,
     source: "mcp/src/rpcFailover.ts",
   },
+  {
+    name: "MINDVAULT_URL_ALLOWLIST",
+    description:
+      "Comma-separated hosts that skip the outbound-URL local/reserved-address guard used by publish and metadata flows (#1078). An entry may be a host, a leading-dot domain, or an IP literal; the http(s) scheme is still enforced. Leave unset in production so loopback, link-local, and private addresses stay rejected.",
+    default: "unset — every private, loopback, and link-local address is rejected",
+    source: "mcp/src/outboundUrl.ts",
+  },
 
   // ── Proxy ──────────────────────────────────────────────────────────────────
   {
