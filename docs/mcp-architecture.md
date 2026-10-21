@@ -157,15 +157,21 @@ The implementation lives in `mcp/src/correlation.ts` and uses `AsyncLocalStorage
 
 ---
 
-## Outbound URL Safety
+## Outbound Proxy
 
-Publish and metadata flows carry a publisher-supplied URL: the `externalUrl` a buyer receives after payment (`mindvault_publish`, `mindvault_publish_batch`) and the `http(s)://` metadata pointer a resource anchors on-chain (`mindvault_update_metadata`). Those strings are validated before they leave the MCP so a URL chosen by a publisher cannot point a later server-side fetch at the host's own network — the classic server-side request forgery (SSRF) path to loopback services, RFC1918 addresses, or the cloud metadata endpoint at `169.254.169.254`.
+Enterprise deployments usually reach the network through an egress proxy. The MCP server honours the conventional proxy environment variables for every outbound call — the MindVault API, Horizon, Soroban RPC, the sponsored-account service, and x402 paid fetches:
 
-The guard lives in `mcp/src/outboundUrl.ts` and rejects, before any request is made:
+| Variable      | Purpose                                                             |
+| ------------- | ------------------------------------------------------------------- |
+| `HTTP_PROXY`  | Proxy URL for `http:` requests (lowercase `http_proxy` also read)   |
+| `HTTPS_PROXY` | Proxy URL for `https:` requests (lowercase `https_proxy` also read) |
+| `NO_PROXY`    | Comma-separated hosts that bypass the proxy (lowercase also read)   |
 
-- **Non-`http(s)` schemes** — `file:`, `ftp:`, `gopher:`, and the like.
-- **Literal addresses in a blocked range** — loopback, private (RFC1918), link-local, shared/CGNAT, multicast, and reserved ranges, for both IPv4 and IPv6 (including IPv4-mapped `::ffff:` and 6to4/Teredo forms).
-- **Structurally local hostnames** — `localhost`, `.localhost`, `.local`, `.internal`, `.home.arpa`.
-- **Resolved private addresses (DNS rebinding)** — a named host whose DNS answer includes any blocked address is rejected, so a name that resolves publicly once and privately the next time does not get through. The same check runs on every redirect hop, so a public URL that redirects to a private one is stopped at the hop.
+Two properties make this safe to enable:
 
-Operators who deliberately target a private host opt in with `MINDVAULT_URL_ALLOWLIST` (see [mcp-env-variables.md](mcp-env-variables.md)); an allowlisted host skips the address checks but never the scheme check. The argument validator (`mcp/src/validation.ts`) applies the scheme, literal-IP, and structural-hostname checks with no DNS I/O; the DNS-rebinding and redirect checks run on the live fetch path via `resolveOutboundUrl` / `guardedFetch`.
+- **Direct-connect is the default.** With no proxy variable set, nothing changes: every request connects directly, exactly as before. A malformed proxy URL fails loudly at the first request rather than silently leaking traffic around the proxy.
+- **Credentials never appear in logs.** A proxy URL commonly embeds `user:password@` userinfo. That userinfo is stripped before a proxy URL reaches any log line, startup diagnostic, `mindvault_network_profile` output, or the debug bundle, so the host is still visible for troubleshooting while the secret is not.
+
+`NO_PROXY` follows the customary semantics: `*` bypasses everything, a leading dot (`.example.com`) matches a domain suffix, a bare domain (`example.com`) matches on a DNS label boundary, and `host:port` additionally requires the port to match.
+
+The implementation lives in `mcp/src/proxy.ts` and routes through an undici `ProxyAgent` attached as the fetch dispatcher for requests a proxy applies to. Proxy URLs are redacted by `mcp/src/redaction.ts` and `mcp/src/diagnostics.ts`.

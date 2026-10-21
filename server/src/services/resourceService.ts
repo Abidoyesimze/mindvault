@@ -5,6 +5,7 @@ import { uploadFile, deleteFile } from "../storage/supabaseStorage.js";
 import { hashFileResource, hashLinkResource } from "../utils/crypto.js";
 import { createTtlCache } from "../lib/ttlCache.js";
 import { config } from "../config.js";
+import { normalizeCatalogSearchTerm } from "../utils/catalogSearch.js";
 
 // Short-lived cache for catalog/preview reads (issue #115). These endpoints are
 // hit far more often than resources change, so a small TTL cuts repeated DB
@@ -235,8 +236,8 @@ export function applyCatalogFilters<
 >(rows: T[], filters?: CatalogListFilters): T[] {
   if (!filters) return rows;
 
-  const search = filters.search?.toLowerCase();
-  const owner = filters.owner?.toLowerCase();
+  const search = filters.search ? normalizeCatalogSearchTerm(filters.search) : undefined;
+  const owner = filters.owner ? normalizeCatalogSearchTerm(filters.owner) : undefined;
   // Prices are stored as decimal strings (e.g. "0.50"); compare numerically and
   // inclusively, parsing only at the point of comparison.
   const min = filters.minPrice !== undefined ? parseFloat(filters.minPrice) : undefined;
@@ -245,7 +246,10 @@ export function applyCatalogFilters<
   return rows.filter((r) => {
     if (
       search &&
-      !(r.title?.toLowerCase().includes(search) || r.description?.toLowerCase().includes(search))
+      !(
+        normalizeCatalogSearchTerm(r.title ?? "").includes(search) ||
+        normalizeCatalogSearchTerm(r.description ?? "").includes(search)
+      )
     ) {
       return false;
     }
@@ -279,12 +283,12 @@ function catalogCacheKey(kind: "list" | "count", filters?: CatalogListFilters): 
   if (filters.minPrice !== undefined) norm.min = filters.minPrice;
   if (filters.maxPrice !== undefined) norm.max = filters.maxPrice;
   if (filters.search) {
-    const q = filters.search.trim().toLowerCase();
+    const q = normalizeCatalogSearchTerm(filters.search);
     if (q) norm.q = q;
   }
   if (filters.resourceType) norm.rt = filters.resourceType;
   if (filters.owner) {
-    const o = filters.owner.trim().toLowerCase();
+    const o = normalizeCatalogSearchTerm(filters.owner);
     if (o) norm.owner = o;
   }
   if (filters.sort) norm.sort = filters.sort;

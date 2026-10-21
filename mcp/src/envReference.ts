@@ -142,6 +142,29 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     source: "mcp/src/outboundUrl.ts",
   },
 
+  // ── Proxy ──────────────────────────────────────────────────────────────────
+  {
+    name: "HTTP_PROXY",
+    description:
+      "Standard proxy URL for `http:` requests. Also accepted lowercase (http_proxy). Credentials in the URL are redacted from logs and diagnostics. Unset means direct connection.",
+    default: "unset — direct connection",
+    source: "mcp/src/proxy.ts",
+  },
+  {
+    name: "HTTPS_PROXY",
+    description:
+      "Standard proxy URL for `https:` requests. Also accepted lowercase (https_proxy). Credentials in the URL are redacted from logs and diagnostics. Unset means direct connection.",
+    default: "unset — direct connection",
+    source: "mcp/src/proxy.ts",
+  },
+  {
+    name: "NO_PROXY",
+    description:
+      "Comma-separated hosts that bypass the proxy, matching the conventional semantics: `*` bypasses everything, a leading dot matches a domain suffix, and `host:port` requires the port to match. Also accepted lowercase (no_proxy).",
+    default: "unset — no host bypasses the proxy",
+    source: "mcp/src/proxy.ts",
+  },
+
   // ── Guardrails & policies ──────────────────────────────────────────────────
   {
     name: "MINDVAULT_ALLOW_MAINNET",

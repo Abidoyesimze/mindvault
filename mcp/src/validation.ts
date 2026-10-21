@@ -232,6 +232,8 @@ const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
   offset: { kind: "integer", min: 0 },
   tags: { kind: "string", maxLength: 256 },
   listed: { kind: "flag" },
+  cursor: { kind: "string", maxLength: 4096 },
+  bypassCache: { kind: "flag" },
 };
 
 // ── Per-tool specs ────────────────────────────────────────────────────────────
@@ -289,7 +291,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   },
   mindvault_browse: { ...CATALOG_FILTER_ARGS },
   mindvault_search: { ...CATALOG_FILTER_ARGS },
-  mindvault_preview: { resourceId: RESOURCE_ID },
+  mindvault_preview: { resourceId: RESOURCE_ID, bypassCache: { kind: "flag" } },
   mindvault_register: {
     name: { kind: "string", required: true, maxLength: 128 },
     email: {
@@ -376,6 +378,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_check_consistency: {
     resourceId: RESOURCE_ID,
     expectedMetadataHash: { kind: "hash" },
+  },
+  mindvault_metadata_diff: {
+    resourceId: RESOURCE_ID,
   },
   mindvault_verify_attestation: {
     resourceId: ON_CHAIN_RESOURCE_ID,

@@ -38,9 +38,11 @@ export const CATALOG_LIST_OUTPUT_SCHEMA = {
   properties: {
     items: { type: "array", items: CATALOG_ITEM_SCHEMA },
     notice: { type: ["string", "null"] },
+    cacheStatus: { type: "string", enum: ["live", "bypassed", "offline"] },
+    nextCursor: { type: ["string", "null"] },
     truncated: { type: "boolean" },
   },
-  required: ["items", "notice", "truncated"],
+  required: ["items", "notice", "cacheStatus", "nextCursor", "truncated"],
 } as const;
 
 export const WALLET_SETUP_OUTPUT_SCHEMA = {
@@ -211,8 +213,18 @@ export const PREVIEW_OUTPUT_SCHEMA = {
     verificationStatus: {},
     accessUrl: {},
     offlineCache: { type: "string" },
+    cacheStatus: { type: "string", enum: ["live", "bypassed", "offline"] },
   },
-  required: ["id", "title", "description", "price", "type", "verificationStatus", "accessUrl"],
+  required: [
+    "id",
+    "title",
+    "description",
+    "price",
+    "type",
+    "verificationStatus",
+    "accessUrl",
+    "cacheStatus",
+  ],
 } as const;
 
 const DRY_RUN_SCHEMA = {
@@ -834,7 +846,9 @@ export const PROFILE_EXPORT_OUTPUT_SCHEMA = {
           network: { type: "string", enum: ["testnet", "mainnet"] },
           preferences: {
             type: "object",
-            propertyNames: { pattern: "^(?!.*(secret|private|seed|credential|apikey|token|password)).*$" },
+            propertyNames: {
+              pattern: "^(?!.*(secret|private|seed|credential|apikey|token|password)).*$",
+            },
             additionalProperties: { type: ["string", "number", "boolean", "null"] },
           },
         },
@@ -849,4 +863,51 @@ export const PROFILE_IMPORT_OUTPUT_SCHEMA = {
   type: "object",
   properties: { imported: { type: "array", items: { type: "string" } } },
   required: ["imported"],
+} as const;
+
+export const METADATA_DIFF_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    resourceId: { type: "string" },
+    apiFound: { type: "boolean" },
+    onchainFound: { type: "boolean" },
+    onchainError: { type: ["string", "null"] },
+    fields: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          field: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["match", "mismatch", "missing_api", "missing_onchain"],
+          },
+          api: {},
+          onchain: {},
+        },
+        required: ["field", "status", "api", "onchain"],
+      },
+    },
+    discrepancyCount: { type: "integer" },
+    summary: { type: "string" },
+    apiSource: { type: "string" },
+    onchainSource: { type: "string" },
+    network: { type: "string" },
+    x402Network: { type: "string" },
+    rpc: { type: "string" },
+  },
+  required: [
+    "resourceId",
+    "apiFound",
+    "onchainFound",
+    "onchainError",
+    "fields",
+    "discrepancyCount",
+    "summary",
+    "apiSource",
+    "onchainSource",
+    "network",
+    "x402Network",
+    "rpc",
+  ],
 } as const;

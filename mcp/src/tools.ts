@@ -22,6 +22,7 @@ import {
   BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA,
   CATALOG_LIST_OUTPUT_SCHEMA,
   CONSISTENCY_OUTPUT_SCHEMA,
+  METADATA_DIFF_OUTPUT_SCHEMA,
   FEE_CONFIG_OUTPUT_SCHEMA,
   LIST_PROFILES_OUTPUT_SCHEMA,
   METADATA_HASH_PREVIEW_OUTPUT_SCHEMA,
@@ -294,7 +295,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_search",
     description:
-      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries.",
+      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; cursors are bound to the active profile and exact filter set. Set bypassCache=true for a fresh per-call read.",
     inputSchema: {
       type: "object",
       properties: { ...catalogFilterInputProperties },
@@ -644,6 +645,11 @@ const DEFINED_TOOLS: ToolDefinition[] = [
             "The resource ID to register on-chain (from mindvault_publish output). Must be verified and not already registered. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
         },
+        bypassCache: {
+          type: "boolean",
+          description:
+            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
+        },
         confirmMainnet: {
           type: "boolean",
           description:
@@ -775,6 +781,30 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: CONSISTENCY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Check Consistency",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_metadata_diff",
+    description:
+      "Compare off-chain resource metadata from the API catalog with the on-chain vault-registry record and report field-level discrepancies. Each compared field (price, metadata pointer, listing status, creator, tags) is reported as match, mismatch, missing_api, or missing_onchain. The response always identifies the comparison sources (API base URL, contract ID) and network so operators know exactly which pair of records they are comparing. Useful for detecting drift after manual edits, failed on-chain sync, or partial publishes. Read-only — does not modify any state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource ID to compare between the API catalog and the on-chain vault-registry.",
+          examples: ["swcn98besxpp6t1u8e77fqz3"],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: METADATA_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Metadata Diff",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

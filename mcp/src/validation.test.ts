@@ -71,6 +71,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_network_profile: {},
   mindvault_check_bindings: {},
   mindvault_check_consistency: { resourceId: "res-001" },
+  mindvault_metadata_diff: { resourceId: "res-001" },
   mindvault_verify_attestation: {
     resourceId: "res001",
     attestationHash: "a".repeat(64),
