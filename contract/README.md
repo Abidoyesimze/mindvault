@@ -266,6 +266,7 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `reactivate_resource(id)`                                                    | `creator`                                                | `id: String`                                                                                                                                                                                                                                         | `Result<(), Error>`                    | Reactivate a `Frozen`/`Delisted` resource back to `Listed` after its dispute was resolved. Only the creator may call it; `Disputed`, `Tombstoned`, or moderator-flagged resources have no creator exit. Emits `reactive`.                                                                                                   |
 | `list(start, limit)`                                                         | —                                                        | `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                                          | `Vec<Resource>`                        | Paginated resource list in insertion order (items only; prefer `list_page` for cursors).                                                                                                                                                                                                                 |
 | `list_page(cursor, limit)`                                                   | —                                                        | `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                                         | `CatalogPage`                          | Paginated page with `items` + `next_cursor`.                                                                                                                                                                                                                                                             |
+| `export_page(cursor, limit)` | — | `cursor: u32` — 0‑based catalog index; `limit: u32` — clamped to `1..=EXPORT_PAGE_CAP` (20) | `ExportPage` | Bounded, deterministic export of every resource (all lifecycle states) for migration/audit tooling: `ResourceExport` allowlist of state and version fields, no private values. See [Registry export pages](#registry-export-pages). |
 | `list_listed(start, limit)`                                                  | —                                                        | `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                                          | `Vec<Resource>`                        | Paginated list of listed-only resources. Delisted resources are skipped; relisted resources reappear.                                                                                                                                                                                                    |
 | `list_by_creator(creator, start, limit)`                                     | —                                                        | `creator: Address`; `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                      | `Vec<Resource>`                        | Paginated list of resources currently owned by `creator`, in registration order.                                                                                                                                                                                                                         |
 | `list_by_tag(tag, start, limit)`                                             | —                                                        | `tag: String` (normalized to lowercase); `start: u32`; `limit: u32` — capped at 20                                                                                                                                                                   | `Vec<Resource>`                        | Paginated list of resources carrying `tag`, in tag-index insertion order. The lookup tag is normalized to lowercase before querying. Tombstoned resources are excluded from results. Returns an empty vec for unknown tags (not `NotFound`). Each resource entry read has its TTL bumped.                |
@@ -884,6 +885,47 @@ slot while the flag matched. The unpaged functions keep their signatures for
 existing callers; document their `start` as a catalog index, never as a match
 count.
 
+### Registry export pages
+
+`export_page(cursor, limit)` is the read path for migration and audit tooling
+that needs the whole registry rather than what is for sale. Walk it from
+`cursor = 0`, passing each page's `next_cursor` back, until `next_cursor` is
+`None`.
+
+- **Bounded.** One call reads at most `EXPORT_PAGE_CAP` (20) catalog index
+  slots. `limit` is clamped to `1..=EXPORT_PAGE_CAP`, so a `0` limit still
+  advances instead of returning the same cursor forever.
+- **Deterministic.** Pages follow catalog index order. The same storage always
+  yields the same pages, and the page size only moves the page boundaries,
+  never the exported sequence. Each item carries its `index`, which strictly
+  increases across the export. Index slots that no longer resolve are skipped
+  without stalling the cursor.
+- **Complete.** Every lifecycle state is exported (`Listed`, `Delisted`,
+  `Frozen`, `Disputed`, `Tombstoned`). Entries are read without the schema
+  guard that mutations apply, so a resource still on an older
+  `schema_version` shows up (compare it with the page's
+  `resource_schema_version` to find what still needs `migrate_resource`).
+- **No private values.** Items are `ResourceExport`, an allowlist, not
+  `Resource`: `index`, `id`, `creator`, `state`, `listed`, `price`,
+  `verified`, `frozen`, `flagged`, `schema_version`, `version`,
+  `created_at`, `updated_at`. The off-chain `metadata` pointer (which can lead
+  to paid content), `content_hash`, tags, the royalty recipient, terms, the
+  flag reason and its hash, moderator identities, and all payment, refund,
+  receipt, and lease records are never part of the view. A field added to
+  `Resource` does not reach the export until `ResourceExport` changes and
+  `EXPORT_VIEW_VERSION` is bumped; each page reports it as `export_version`.
+- **Read-only.** Available while the contract is paused.
+
+```rust
+pub struct ExportPage {
+    pub export_version: u32,          // EXPORT_VIEW_VERSION (currently 1)
+    pub resource_schema_version: u32, // RESOURCE_SCHEMA_VERSION of this build
+    pub total: u32,                   // catalog index slots (`count`) at read time
+    pub items: Vec<ResourceExport>,
+    pub next_cursor: Option<u32>,     // None = end of export
+}
+```
+
 ### Payments require a listed resource
 
 `record_payment` and `record_payment_idempotent` reject a resource that is not
@@ -1114,6 +1156,8 @@ must require an explicit deployment guard.
 | `MAX_TX_HASH_LEN`          | `128`                        | Maximum length of a payment receipt tx hash, in bytes.                                                                                       |
 | `MAX_PRICE`                | `10^18`                      | Maximum price, in USDC base units (7 decimals).                                                                                               |
 | `LIST_PAGE_CAP`            | `20`                         | Maximum items returned per page by all `list*` calls.                                                                                        |
+| `EXPORT_PAGE_CAP`          | `20`                         | Maximum catalog index slots `export_page` reads per call.                                                                                    |
+| `EXPORT_VIEW_VERSION`      | `1`                          | Version of the `ResourceExport` layout returned by `export_page`.                                                                            |
 | `MAX_ANCHOR_ATTEMPTS`      | `5`                          | Rejected `attempt_anchor_purchase_receipt` calls allowed per `(resource_id, buyer)` before the pair fails fast.                               |
 | `ANCHOR_RETRY_BACKOFF_LEDGERS` | `12`                     | Minimum ledgers between two rejected anchor attempts for the same pair.                                                                      |
 | `LEASE_HOUR_LEDGERS` / `LEASE_DAY_LEDGERS` / `LEASE_WEEK_LEDGERS` | `720` / `17280` / `120960` | Lease duration per `LeaseTier`.                                                                                          |

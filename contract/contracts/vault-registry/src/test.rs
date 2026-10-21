@@ -11227,3 +11227,4 @@ include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
+include!("test/registry_export.rs");
