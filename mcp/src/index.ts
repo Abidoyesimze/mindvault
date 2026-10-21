@@ -171,6 +171,7 @@ import {
 } from "./stateBackup.js";
 import { provenanceChain, recordResourceHistory, resourceChangeLog } from "./resourceHistory.js";
 import { logger } from "./logger.js";
+import { correlationHeaders } from "./correlation.js";
 import {
   buildSettlementSnapshot,
   estimateSettlementSteps,
