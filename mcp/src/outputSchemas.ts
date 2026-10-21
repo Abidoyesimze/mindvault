@@ -747,6 +747,7 @@ export const TEXT_ONLY_TOOLS = [
   "mindvault_verify_install",
   "mindvault_registry_health",
   "mindvault_check_state_permissions",
+  "mindvault_compare_state_backup",
   "mindvault_register",
   "mindvault_rotate_publisher_key",
   "mindvault_set_tags",
@@ -834,7 +835,9 @@ export const PROFILE_EXPORT_OUTPUT_SCHEMA = {
           network: { type: "string", enum: ["testnet", "mainnet"] },
           preferences: {
             type: "object",
-            propertyNames: { pattern: "^(?!.*(secret|private|seed|credential|apikey|token|password)).*$" },
+            propertyNames: {
+              pattern: "^(?!.*(secret|private|seed|credential|apikey|token|password)).*$",
+            },
             additionalProperties: { type: ["string", "number", "boolean", "null"] },
           },
         },

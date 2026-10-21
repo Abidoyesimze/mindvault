@@ -21,6 +21,7 @@ import {
   STATE_FILE,
 } from "../runtime.js";
 import { insufficientFundsMessage } from "./registry.js";
+import { assertOnchainSetupReady } from "../onchainPreflight.js";
 import {
   isTimeoutError,
   mapHttpError,
@@ -78,6 +79,9 @@ export async function register(
   email: string,
   walletAddress?: string,
 ): Promise<string> {
+  // Fail fast on a locally fatal on-chain config problem (missing/malformed
+  // contract ID, unrecognized network) before touching the network (#1054).
+  assertOnchainSetupReady();
   const wallet = requireWallet();
   const res = await jsonFetch(`${BASE_URL}/publishers`, {
     method: "POST",
@@ -109,6 +113,10 @@ export async function publish(args: {
       2,
     );
   }
+
+  // Dry runs stay offline; once the flow commits to on-chain work, fail fast
+  // on a locally fatal config problem (#1054).
+  assertOnchainSetupReady();
 
   const wallet = requireWallet();
   const apiKey = requireApiKey();
@@ -431,6 +439,9 @@ export async function registerOnchain(
   resourceId: string,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
 ): Promise<string> {
+  // This flow signs and submits a Soroban transaction; fail fast on a locally
+  // fatal on-chain config problem before preparing it (#1054).
+  assertOnchainSetupReady();
   const wallet = requireWallet();
   const apiKey = requireApiKey();
   if (!resourceId) throw new Error("resourceId is required.");
