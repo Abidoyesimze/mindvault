@@ -321,6 +321,16 @@ const LEASE_BUY_SUCCESS_SCHEMA = {
   type: "object",
   properties: {
     status: { type: "string", const: "success" },
+    txPhase: {
+      type: "string",
+      enum: ["simulated", "submitted", "included", "settled"],
+      description:
+        '"settled" = USDC transfer polled to SUCCESS on-chain before this result was returned.',
+    },
+    confirmed: {
+      type: "boolean",
+      description: 'true only when txPhase is "settled". Deprecated: prefer txPhase.',
+    },
     resourceId: { type: "string" },
     tier: { type: "string" },
     creator: { type: "string" },
@@ -657,7 +667,13 @@ const ONCHAIN_MUTATION_SUCCESS = {
     status: {
       type: "string",
       description:
-        '"success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.',
+        '"success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.',
+    },
+    txPhase: {
+      type: "string",
+      enum: ["simulated", "submitted", "included", "settled"],
+      description:
+        'Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.',
     },
     resourceId: { type: "string" },
     txHash: { type: ["string", "null"] },
@@ -665,7 +681,10 @@ const ONCHAIN_MUTATION_SUCCESS = {
     price: { type: "string" },
     newCreator: { type: "string" },
     listed: { type: "boolean" },
-    confirmed: { type: "boolean" },
+    confirmed: {
+      type: "boolean",
+      description: 'true only when txPhase is "settled". Deprecated: prefer txPhase.',
+    },
     reason: { type: "string", enum: ["confirmation_timeout", "rpc_unavailable"] },
     statusLookup: TX_STATUS_LOOKUP_SCHEMA,
     message: { type: "string" },
@@ -834,7 +853,9 @@ export const PROFILE_EXPORT_OUTPUT_SCHEMA = {
           network: { type: "string", enum: ["testnet", "mainnet"] },
           preferences: {
             type: "object",
-            propertyNames: { pattern: "^(?!.*(secret|private|seed|credential|apikey|token|password)).*$" },
+            propertyNames: {
+              pattern: "^(?!.*(secret|private|seed|credential|apikey|token|password)).*$",
+            },
             additionalProperties: { type: ["string", "number", "boolean", "null"] },
           },
         },

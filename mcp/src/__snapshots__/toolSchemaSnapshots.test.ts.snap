@@ -40,6 +40,7 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -68,7 +69,7 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -104,6 +105,16 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -647,11 +658,11 @@ exports[`tool schema snapshots > mindvault_buy > input schema 1`] = `
       "type": "integer",
     },
     "wait": {
-      "description": "Optional flag. When true, wait and poll the payment transaction on Soroban until it settles (SUCCESS or FAILED) or the timeout elapses, returning a settlement confirmation block. Off by default, in which case the buy returns as soon as the payment response arrives. Legacy shorthand for waitPolicy: \\"wait-for-final-result\\".",
+      "description": "Optional flag. When true, wait and poll the payment transaction on Soroban until it settles (SUCCESS or FAILED) or the timeout elapses, returning a settlement confirmation block. Off by default, in which case the buy returns as soon as the payment response arrives. Legacy shorthand for waitPolicy: "wait-for-final-result".",
       "type": "boolean",
     },
     "waitPolicy": {
-      "description": "How long to wait for the payment transaction before returning. \\"return-after-submit\\" (default) returns as soon as the payment is submitted, reporting the tx hash and any status already known; \\"wait-for-final-result\\" polls until the transaction reaches a terminal status or timeoutMs elapses. Takes precedence over wait when both are set.",
+      "description": "How long to wait for the payment transaction before returning. "return-after-submit" (default) returns as soon as the payment is submitted, reporting the tx hash and any status already known; "wait-for-final-result" polls until the transaction reaches a terminal status or timeoutMs elapses. Takes precedence over wait when both are set.",
       "enum": [
         "return-after-submit",
         "wait-for-final-result",
@@ -678,23 +689,13 @@ exports[`tool schema snapshots > mindvault_buy > output schema 1`] = `
         {
           "description": "mindvault_buy result: the purchase diff plus a settlement-confirmation block describing how far the payment transaction got before returning.",
           "properties": {
-            "attempts": {
-              "type": "integer",
-            },
-            "cancelled": {
-              "type": "boolean",
-            },
-            "message": {
-              "type": "string",
-            },
-            "polled": {
-              "type": "boolean",
-            },
-            "settled": {
-              "type": "boolean",
-            },
-            "skipped": {
-              "type": "boolean",
+            "after": {},
+            "before": {},
+            "changedFields": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
             },
             "failureGuidance": {
               "type": [
@@ -706,6 +707,9 @@ exports[`tool schema snapshots > mindvault_buy > output schema 1`] = `
               "properties": {
                 "attempts": {
                   "type": "integer",
+                },
+                "cancelled": {
+                  "type": "boolean",
                 },
                 "message": {
                   "type": "string",
@@ -737,14 +741,23 @@ exports[`tool schema snapshots > mindvault_buy > output schema 1`] = `
                     "null",
                   ],
                 },
+                "waitPolicy": {
+                  "enum": [
+                    "return-after-submit",
+                    "wait-for-final-result",
+                  ],
+                  "type": "string",
+                },
               },
               "required": [
                 "polled",
+                "waitPolicy",
                 "txHash",
                 "status",
                 "settled",
                 "success",
                 "timedOut",
+                "cancelled",
                 "attempts",
                 "skipped",
                 "message",
@@ -757,26 +770,13 @@ exports[`tool schema snapshots > mindvault_buy > output schema 1`] = `
                 "null",
               ],
             },
-            "waitPolicy": {
-              "enum": [
-                "return-after-submit",
-                "wait-for-final-result",
-              ],
-              "type": "string",
-            },
           },
           "required": [
-            "polled",
-            "waitPolicy",
+            "before",
+            "after",
+            "changedFields",
             "txHash",
-            "status",
-            "settled",
-            "success",
-            "timedOut",
-            "cancelled",
-            "attempts",
-            "skipped",
-            "message",
+            "settlement",
           ],
           "type": "object",
         },
@@ -952,6 +952,10 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
       "oneOf": [
         {
           "properties": {
+            "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
+              "type": "boolean",
+            },
             "creator": {
               "type": "string",
             },
@@ -1030,6 +1034,16 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
               "type": "string",
             },
             "tier": {
+              "type": "string",
+            },
+            "txPhase": {
+              "description": ""settled" = USDC transfer polled to SUCCESS on-chain before this result was returned.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
               "type": "string",
             },
           },
@@ -1188,6 +1202,7 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -1216,7 +1231,7 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -1252,6 +1267,16 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -1577,6 +1602,37 @@ exports[`tool schema snapshots > mindvault_client_config > input schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_client_config > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_compare_state_backup > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Compare State Backup",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_compare_state_backup > input schema 1`] = `
+{
+  "properties": {
+    "blob": {
+      "description": "Encrypted backup blob from mindvault_backup_state (v1:… format).",
+      "type": "string",
+    },
+    "passphrase": {
+      "description": "Passphrase used when the backup was created (min 8 characters).",
+      "type": "string",
+    },
+  },
+  "required": [
+    "blob",
+    "passphrase",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_compare_state_backup > output schema 1`] = `null`;
+
 exports[`tool schema snapshots > mindvault_debug_bundle > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -1640,6 +1696,10 @@ exports[`tool schema snapshots > mindvault_debug_bundle > output schema 1`] = `
             },
             "requested": {
               "type": "integer",
+            },
+            "truncated": {
+              "description": "True when older entries were omitted by the bounded 256 KiB audit-log read.",
+              "type": "boolean",
             },
           },
           "required": [
@@ -1976,6 +2036,140 @@ exports[`tool schema snapshots > mindvault_debug_bundle > output schema 1`] = `
         "metrics",
         "catalogCache",
         "auditLog",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_export_profiles > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Export Profile Setup",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_export_profiles > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_export_profiles > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "activeProfile": {
+          "type": "string",
+        },
+        "profiles": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+              },
+              "network": {
+                "enum": [
+                  "testnet",
+                  "mainnet",
+                ],
+                "type": "string",
+              },
+              "preferences": {
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null",
+                  ],
+                },
+                "propertyNames": {
+                  "pattern": "^(?!.*(secret|private|seed|credential|apikey|token|password)).*$",
+                },
+                "type": "object",
+              },
+            },
+            "required": [
+              "name",
+              "preferences",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "schema": {
+          "const": "mindvault.profile-export",
+          "type": "string",
+        },
+        "version": {
+          "const": 1,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "schema",
+        "version",
+        "activeProfile",
+        "profiles",
       ],
       "type": "object",
     },
@@ -2539,6 +2733,7 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -2567,7 +2762,7 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -2603,6 +2798,16 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -2659,6 +2864,102 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
           ],
           "type": "object",
         },
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_import_profiles > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": false,
+  "title": "Import Profile Setup",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_import_profiles > input schema 1`] = `
+{
+  "properties": {
+    "data": {
+      "description": "JSON profile-export payload.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "data",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_import_profiles > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "imported": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "imported",
       ],
       "type": "object",
     },
@@ -5522,6 +5823,7 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -5550,7 +5852,7 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -5586,6 +5888,16 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -6012,6 +6324,7 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6040,7 +6353,7 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6076,6 +6389,16 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -6244,6 +6567,7 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6272,7 +6596,7 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6308,6 +6632,16 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -6719,6 +7053,7 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6747,7 +7082,7 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6783,6 +7118,16 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -7089,6 +7434,7 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -7117,7 +7463,7 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -7153,6 +7499,16 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -7684,10 +8040,13 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_check_consistency",
   "mindvault_check_state_permissions",
   "mindvault_client_config",
+  "mindvault_compare_state_backup",
   "mindvault_debug_bundle",
+  "mindvault_export_profiles",
   "mindvault_export_receipts",
   "mindvault_fee_config",
   "mindvault_freeze",
+  "mindvault_import_profiles",
   "mindvault_import_wallet",
   "mindvault_lease_status",
   "mindvault_list_profiles",
