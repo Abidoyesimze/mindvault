@@ -40,6 +40,7 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -68,7 +69,7 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -104,6 +105,16 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -941,6 +952,10 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
       "oneOf": [
         {
           "properties": {
+            "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
+              "type": "boolean",
+            },
             "creator": {
               "type": "string",
             },
@@ -1019,6 +1034,16 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
               "type": "string",
             },
             "tier": {
+              "type": "string",
+            },
+            "txPhase": {
+              "description": ""settled" = USDC transfer polled to SUCCESS on-chain before this result was returned.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
               "type": "string",
             },
           },
@@ -1177,6 +1202,7 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -1205,7 +1231,7 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -1241,6 +1267,16 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -2759,6 +2795,7 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -2787,7 +2824,7 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -2823,6 +2860,16 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -6005,6 +6052,7 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6033,7 +6081,7 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6069,6 +6117,16 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -6495,6 +6553,7 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6523,7 +6582,7 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6559,6 +6618,16 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -6727,6 +6796,7 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6755,7 +6825,7 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6791,6 +6861,16 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -7202,6 +7282,7 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -7230,7 +7311,7 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -7266,6 +7347,16 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -7572,6 +7663,7 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -7600,7 +7692,7 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -7636,6 +7728,16 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [

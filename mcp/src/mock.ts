@@ -16,6 +16,7 @@
 import { Keypair } from "@stellar/stellar-sdk";
 import { explorerTxUrl } from "./stellarExplorer.js";
 import { stroopsToUsdc } from "./usdcAmount.js";
+import { txPhaseFields } from "./txPhases.js";
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
@@ -364,6 +365,7 @@ export function mockUpdateMetadata(resourceId: string, metadata: string): string
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       metadata,
       txHash: `MOCK_TX_UPDATE_META_${resourceId}`,
@@ -379,6 +381,7 @@ export function mockSetPrice(resourceId: string, price: string): string {
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       price,
       txHash: `MOCK_TX_SET_PRICE_${resourceId}`,
@@ -394,6 +397,7 @@ export function mockTransferOwnership(resourceId: string, newCreator: string): s
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       newCreator,
       txHash: `MOCK_TX_TRANSFER_${resourceId}`,
@@ -409,6 +413,7 @@ export function mockAcceptTransfer(resourceId: string): string {
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       txHash: `MOCK_TX_ACCEPT_TRANSFER_${resourceId}`,
       explorerUrl: explorerTxUrl(`MOCK_TX_ACCEPT_TRANSFER_${resourceId}`),
@@ -423,6 +428,7 @@ export function mockCancelTransfer(resourceId: string): string {
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       txHash: `MOCK_TX_CANCEL_TRANSFER_${resourceId}`,
       explorerUrl: explorerTxUrl(`MOCK_TX_CANCEL_TRANSFER_${resourceId}`),
@@ -459,6 +465,7 @@ export function mockSetListed(resourceId: string, listed: boolean): string {
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       listed,
       txHash: `MOCK_TX_SET_LISTED_${resourceId}`,
@@ -684,6 +691,7 @@ export function mockBuyLease(resourceId: string, tier: string, dryRun: boolean):
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       tier,
       priceStroops: priceStroops.toString(),

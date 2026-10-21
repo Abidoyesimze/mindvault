@@ -32,6 +32,7 @@ import {
   signAndSendTracked,
   submittedUnconfirmedResult,
 } from "./submittedTransaction.js";
+import { txPhaseFields } from "./txPhases.js";
 import {
   SERVER_STATUS_URI,
   createServerStatusWatcher,
@@ -2834,6 +2835,7 @@ export async function updateMetadata(resourceId: string, metadata: string): Prom
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       metadata,
       txHash,
@@ -2934,6 +2936,7 @@ export async function setPrice(resourceId: string, price: string): Promise<strin
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       price,
       txHash,
@@ -3032,6 +3035,7 @@ export async function transferOwnership(resourceId: string, newCreator: string):
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       newCreator,
       txHash,
@@ -3122,6 +3126,7 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       listed,
       txHash,
