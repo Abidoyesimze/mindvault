@@ -885,6 +885,36 @@ export const PROFILE_IMPORT_OUTPUT_SCHEMA = {
   required: ["imported"],
 } as const;
 
+/** Output schema for mindvault_rpc_health (#1020). */
+const RPC_ENDPOINT_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    url: { type: "string" },
+    ok: { type: "boolean" },
+    latencyMs: { type: ["integer", "null"] },
+    networkId: { type: ["string", "null"] },
+    message: { type: "string" },
+  },
+  required: ["name", "url", "ok", "latencyMs", "message"],
+} as const;
+
+export const RPC_HEALTH_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    profile: { type: "string" },
+    horizonUrl: { type: "string" },
+    sorobanRpcUrl: { type: "string" },
+    allOk: { type: "boolean" },
+    endpoints: {
+      type: "array",
+      items: RPC_ENDPOINT_SCHEMA,
+    },
+    summary: { type: "string" },
+  },
+  required: ["profile", "horizonUrl", "sorobanRpcUrl", "allOk", "endpoints", "summary"],
+} as const;
+
 export const METADATA_DIFF_OUTPUT_SCHEMA = {
   type: "object",
   properties: {

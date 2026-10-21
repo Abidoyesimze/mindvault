@@ -157,6 +157,8 @@ import { safeErrorMessage, safeLog } from "./redaction.js";
 import {
   assertAutoPaymentWithinCeiling,
   assertTransactionFeeWithinCeiling,
+  assertChallengePriceWithinCeiling,
+  PriceChangedCeilingError,
 } from "./paymentCeiling.js";
 import {
   compareUsdc,
@@ -714,6 +716,163 @@ async function registryHealth(): Promise<string> {
   return lines.join("\n");
 }
 
+// ── #1020: Profile-scoped RPC health checks ──────────────────────────────────
+
+interface RpcEndpointResult {
+  name: string;
+  url: string;
+  ok: boolean;
+  latencyMs: number | null;
+  networkId: string | null;
+  message: string;
+}
+
+/**
+ * Check the active profile's Horizon and Soroban RPC endpoints for reachability,
+ * latency, and reported network identity.
+ *
+ * Uses configured TIMEOUTS — never signs or submits transactions.
+ * Returns structured per-endpoint results with latency in milliseconds.
+ */
+async function rpcHealthOutcome(): Promise<ToolOutcome> {
+  const endpoints: RpcEndpointResult[] = [];
+
+  // Check Horizon (simple GET, expects JSON with network_passphrase)
+  const horizonStart = Date.now();
+  let horizonResult: RpcEndpointResult;
+  try {
+    const initWithUA: RequestInit = {
+      headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+    };
+    const res = await fetchWithTimeout(
+      httpFetch,
+      HORIZON_URL,
+      initWithUA,
+      "horizon",
+      TIMEOUTS.horizon,
+    );
+    const latencyMs = Date.now() - horizonStart;
+    if (res.ok) {
+      let networkId: string | null = null;
+      try {
+        const body = await res.json();
+        networkId =
+          (typeof body?.network_passphrase === "string" ? body.network_passphrase : null) ??
+          (typeof body?.network === "string" ? body.network : null);
+      } catch {
+        void 0;
+      }
+      horizonResult = {
+        name: "Horizon",
+        url: HORIZON_URL,
+        ok: true,
+        latencyMs,
+        networkId,
+        message: `Reachable (HTTP ${res.status}, ${latencyMs}ms)${networkId ? ` — network: ${networkId}` : ""}`,
+      };
+    } else {
+      horizonResult = {
+        name: "Horizon",
+        url: HORIZON_URL,
+        ok: false,
+        latencyMs,
+        message: `HTTP ${res.status} — check HORIZON_URL or Stellar testnet status`,
+        networkId: null,
+      };
+    }
+  } catch (err) {
+    horizonResult = {
+      name: "Horizon",
+      url: HORIZON_URL,
+      ok: false,
+      latencyMs: null,
+      networkId: null,
+      message: `Unreachable: ${safeErrorMessage(err)} — check HORIZON_URL or network connectivity`,
+    };
+  }
+  endpoints.push(horizonResult);
+
+  // Check Soroban RPC (POST getNetwork)
+  const sorobanStart = Date.now();
+  let sorobanResult: RpcEndpointResult;
+  try {
+    const initWithUA: RequestInit = {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getNetwork", params: {} }),
+    };
+    const res = await fetchWithTimeout(
+      httpFetch,
+      SOROBAN_RPC_URL,
+      initWithUA,
+      "soroban",
+      TIMEOUTS.soroban,
+    );
+    const latencyMs = Date.now() - sorobanStart;
+    if (res.ok) {
+      let networkId: string | null = null;
+      try {
+        const body = await res.json();
+        const result = body?.result;
+        networkId =
+          (typeof result?.networkPassphrase === "string" ? result.networkPassphrase : null) ??
+          (typeof result?.network === "string" ? result.network : null) ??
+          (typeof result?.friendbotUrl === "string" ? "has-friendbot" : null);
+      } catch {
+        void 0;
+      }
+      sorobanResult = {
+        name: "Soroban RPC",
+        url: SOROBAN_RPC_URL,
+        ok: true,
+        latencyMs,
+        networkId,
+        message: `Reachable (HTTP ${res.status}, ${latencyMs}ms)${networkId ? ` — network: ${networkId}` : ""}`,
+      };
+    } else {
+      sorobanResult = {
+        name: "Soroban RPC",
+        url: SOROBAN_RPC_URL,
+        ok: false,
+        latencyMs,
+        networkId: null,
+        message: `HTTP ${res.status} — check SOROBAN_RPC_URL or Stellar testnet status`,
+      };
+    }
+  } catch (err) {
+    sorobanResult = {
+      name: "Soroban RPC",
+      url: SOROBAN_RPC_URL,
+      ok: false,
+      latencyMs: null,
+      networkId: null,
+      message: `Unreachable: ${safeErrorMessage(err)} — check SOROBAN_RPC_URL or network connectivity`,
+    };
+  }
+  endpoints.push(sorobanResult);
+
+  const allOk = endpoints.every((e) => e.ok);
+
+  const summaryLines = endpoints.map((e) => {
+    const icon = e.ok ? "✓" : "✗";
+    return `${icon} ${e.name} (${e.url}): ${e.message}`;
+  });
+  const summary = allOk ? "All RPC endpoints healthy." : "One or more RPC endpoints are unhealthy.";
+  const text = [`Profile: ${activeProfileName}`, summary, "", ...summaryLines].join("\n");
+
+  return {
+    text,
+    structured: {
+      profile: activeProfileName,
+      horizonUrl: HORIZON_URL,
+      sorobanRpcUrl: SOROBAN_RPC_URL,
+      allOk,
+      endpoints,
+      summary,
+    },
+  };
+}
+
 // ── #882: Catalog cache pre-warm ─────────────────────────────────────────────
 // browseOutcome() already records a fresh snapshot into catalogCache.ts on
 // every successful call and falls back to the last snapshot on a transport
@@ -1026,11 +1185,38 @@ function requireApiKey(): string {
   return apiKey;
 }
 
-function makePaidFetch(wallet: AgentWallet) {
+function makePaidFetch(wallet: AgentWallet, baseFetch?: typeof fetch) {
   const signer = createEd25519Signer(wallet.secretKey, NETWORK);
   const scheme = new ExactStellarScheme(signer);
   const client = new x402Client().register(NETWORK, scheme);
-  return wrapFetchWithPayment(withTimeout(httpFetch, "payment", TIMEOUTS.payment), client);
+  const resolvedFetch = baseFetch ?? httpFetch;
+  return wrapFetchWithPayment(withTimeout(resolvedFetch, "payment", TIMEOUTS.payment), client);
+}
+
+/**
+ * Wrap httpFetch so that a 402 response with a price that differs from the
+ * preview price and exceeds the auto-pay ceiling throws PriceChangedCeilingError
+ * BEFORE the x402 client signs anything (#1025).
+ *
+ * The x402 client calls `fetch(url)`, gets 402, reads PAYMENT-REQUIRED, and
+ * immediately constructs and signs the payment. By intercepting the 402 here —
+ * before it ever reaches the x402 client — we can validate the actual charged
+ * price against the ceiling without needing a pre-sign hook in the x402 library.
+ *
+ * When the header is absent or unparseable the response passes through
+ * unmodified; the x402 client proceeds normally and the facilitator will reject
+ * a mis-signed entry if the price truly changed.
+ */
+function makeCeilingInterceptFetch(previewPrice: string, maxAutoPayUsdc?: string): typeof fetch {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const res = await httpFetch(input, init);
+    if (res.status === 402) {
+      const headerValue =
+        res.headers.get("PAYMENT-REQUIRED") ?? res.headers.get("payment-required");
+      assertChallengePriceWithinCeiling({ headerValue, previewPrice, maxAutoPayUsdc });
+    }
+    return res;
+  };
 }
 
 interface BalanceDetails {
@@ -2540,13 +2726,22 @@ export async function buy(
       }
     : null;
 
-  const paidFetch = makePaidFetch(wallet);
+  const paidFetch = makePaidFetch(
+    wallet,
+    makeCeilingInterceptFetch(String(meta.data.price), maxAutoPayUsdc),
+  );
   let res: Response;
   try {
     await onProgress?.(2, 4, "Submitting payment");
     res = await paidFetch(`${BASE_URL}/resources/${resourceId}`);
   } catch (err) {
     metrics.recordPayment(false);
+    if (err instanceof PriceChangedCeilingError) {
+      // Price changed between preview and x402 challenge — the agent must
+      // re-authorize. Return a structured refusal (same shape as ceiling
+      // exceeded on preview) so the error is actionable without a stack trace.
+      return `Payment blocked: the server's price changed after the preview.\n` + err.message;
+    }
     throw mcpError(mapTransportError({ operation: "Buy failed", source: "x402", error: err }));
   }
   metrics.recordPayment(res.ok);
@@ -4377,6 +4572,8 @@ async function dispatchToolOutcome(
         return checkStatePermissionsTool();
       case "mindvault_registry_health":
         return registryHealth();
+      case "mindvault_rpc_health":
+        return rpcHealthOutcome();
       case "mindvault_prewarm_catalog":
         return prewarmCatalogCache();
       case "mindvault_client_config":

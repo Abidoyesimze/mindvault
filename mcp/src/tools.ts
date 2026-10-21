@@ -48,6 +48,7 @@ import {
   REGISTRY_LIST_OUTPUT_SCHEMA,
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
+  RPC_HEALTH_OUTPUT_SCHEMA,
   SERVER_ENDPOINTS_OUTPUT_SCHEMA,
   TX_STATUS_OUTPUT_SCHEMA,
   USE_PROFILE_OUTPUT_SCHEMA,
@@ -1560,6 +1561,19 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     inputSchema: { type: "object", properties: {}, required: [] },
     annotations: {
       title: "Registry Health",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_rpc_health",
+    description:
+      "Check the active profile's Horizon and Soroban RPC endpoints and report latency, network identity, and actionable failure detail. Uses configured timeouts. Never signs or submits transactions. Returns per-endpoint status with latency in milliseconds and the network passphrase/id returned by each endpoint so misconfigurations are visible without inspecting env vars.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: RPC_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "RPC Health",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
