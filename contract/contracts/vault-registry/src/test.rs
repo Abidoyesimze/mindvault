@@ -322,10 +322,14 @@ fn register_batch_handles_empty_batch() {
     let (env, creator, client) = setup();
 
     let items = Vec::new(&env);
-    let result = client.register_batch(&creator, &items);
-
-    assert_eq!(result.succeeded.len(), 0);
-    assert_eq!(result.failed.len(), 0);
+    // An empty batch is now rejected with BatchTooLarge to prevent callers
+    // from silently succeeding on an unintended no-op (#1014).
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(
+        res,
+        Err(Ok(Error::BatchTooLarge)),
+        "empty register_batch must be rejected, not silently succeed"
+    );
 }
 
 #[test]
@@ -1192,6 +1196,19 @@ fn set_price_many_rejects_oversized_batches() {
     assert_eq!(
         client.try_set_price_many(&creator, &updates),
         Err(Ok(Error::BatchTooLarge))
+    );
+}
+
+#[test]
+fn set_price_many_rejects_empty_batch() {
+    // An empty batch is rejected with BatchTooLarge to prevent callers from
+    // silently succeeding on an unintended no-op (#1014).
+    let (env, creator, client) = setup();
+    let updates: Vec<BatchPriceUpdate> = Vec::new(&env);
+    assert_eq!(
+        client.try_set_price_many(&creator, &updates),
+        Err(Ok(Error::BatchTooLarge)),
+        "empty set_price_many must be rejected, not silently succeed"
     );
 }
 
@@ -6628,6 +6645,20 @@ fn update_metadata_many_rejects_oversized_batch() {
 }
 
 #[test]
+fn update_metadata_many_rejects_empty_batch() {
+    // An empty batch is rejected with BatchTooLarge to prevent callers from
+    // silently succeeding on an unintended no-op (#1014).
+    let (env, creator, client) = setup();
+    let updates: Vec<BatchMetadataUpdate> = Vec::new(&env);
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(
+        res,
+        Err(Ok(Error::BatchTooLarge)),
+        "empty update_metadata_many must be rejected, not silently succeed"
+    );
+}
+
+#[test]
 fn update_metadata_many_emits_no_events_on_rejection() {
     let (env, creator, client) = setup();
     let id = register_default(&env, &creator, &client, "umne");
@@ -6863,6 +6894,52 @@ fn repair_index_rerunning_current_list_is_a_safe_noop() {
     let page = client.list(&0u32, &10u32);
     assert_eq!(page.get(0).unwrap().id, a);
     assert_eq!(page.get(1).unwrap().id, b);
+}
+
+#[test]
+fn repair_index_shrink_cleans_up_stale_slots() {
+    // When the new list is shorter than the old one, stale Index slots above
+    // the new length must be removed so the index is fully convergent: two
+    // calls to repair_index with the same list must produce identical state
+    // regardless of the prior count (#1011).
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_default(&env, &creator, &client, "rres5a");
+    let b = register_default(&env, &creator, &client, "rres5b");
+    let c = register_default(&env, &creator, &client, "rres5c");
+
+    // Shrink from 3 to 1.
+    client.repair_index(&Vec::from_array(&env, [a.clone()]));
+    assert_eq!(client.count(), 1);
+
+    // A second repair with the same list must yield the same count.
+    client.repair_index(&Vec::from_array(&env, [a.clone()]));
+    assert_eq!(client.count(), 1);
+
+    // Only `a` is reachable via list; `b` and `c` are still addressable by id.
+    let page = client.list(&0u32, &10u32);
+    assert_eq!(page.len(), 1);
+    assert_eq!(page.get(0).unwrap().id, a);
+    assert!(client.exists(&b));
+    assert!(client.exists(&c));
+}
+
+#[test]
+fn repair_index_with_empty_list_is_a_silent_noop() {
+    // An empty ids list returns Ok(()) but does not modify the index or emit
+    // a reindex event — identical to repair_tag_index's empty-list behavior.
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_default(&env, &creator, &client, "rres6a");
+
+    // Record the count before.
+    let before_count = client.count();
+
+    client.repair_index(&Vec::new(&env));
+
+    // Count is unchanged, `a` is still listed.
+    assert_eq!(client.count(), before_count);
+    let page = client.list(&0u32, &10u32);
+    assert_eq!(page.len(), 1);
+    assert_eq!(page.get(0).unwrap().id, a);
 }
 
 // ---------------------------------------------------------------------------
@@ -9937,7 +10014,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 47] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 48] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -9992,11 +10069,6 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 47] {
             "AnchorFailure",
             3,
         ),
-        (
-            DataKey::AnchorAttempts(id.clone(), who.clone()),
-            "AnchorAttempts",
-            3,
-        ),
         (DataKey::TagIndex(id.clone()), "TagIndex", 2),
         (DataKey::FeeConfig, "FeeConfig", 1),
         (DataKey::Moderator(who.clone()), "Moderator", 2),
@@ -10021,6 +10093,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 47] {
         (DataKey::FeeDestination, "FeeDestination", 1),
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
+        (DataKey::Revision(id.clone()), "Revision", 2),
     ]
 }
 
@@ -10060,7 +10133,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        47,
+        48,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10097,7 +10170,6 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::AnchorFailure(_, _) => "AnchorFailure",
-            DataKey::AnchorAttempts(_, _) => "AnchorAttempts",
             DataKey::TagIndex(_) => "TagIndex",
             DataKey::FeeConfig => "FeeConfig",
             DataKey::Moderator(_) => "Moderator",
@@ -10114,6 +10186,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::FeeDestination => "FeeDestination",
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
+            DataKey::Revision(_) => "Revision",
         };
         assert_eq!(
             matched, *name,
@@ -11664,9 +11737,12 @@ include!("test/storage_footprint.rs");
 
 include!("test/auth_fixtures.rs");
 include!("test/tombstone_read.rs");
+include!("test/listed_count_matrix.rs");
 include!("test/creator_listed_count.rs");
 include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
 include!("test/stellar_wave_970_971_975_976.rs");
+include!("test/creator_page_filtered.rs");
+include!("test/tag_prefix_search.rs");

@@ -222,7 +222,9 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_listed_page", "—"),
     ("list_by_dispute_status_page", "—"),
     ("list_by_creator_page", "—"),
+    ("list_by_creator_page_filtered", "—"),
     ("list_by_tag_page", "—"),
+    ("search_by_tag_prefix", "—"),
     // ── Verification ──────────────────────────────────────────────────────
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
@@ -388,6 +390,11 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (48, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
     (49, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
     (50, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
+    (51, "InvalidMetadataPointers", "`set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`, or duplicate pointers, or an out-of-range `primary` index."),
+    (52, "AdminAlreadySet", "`bootstrap_dual_admin` was called after an admin was already set."),
+    (53, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
+    (54, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
+    (55, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -402,6 +409,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
 pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("register", "Resource"),
     ("regmemo", "memo_hash: BytesN<32>"),
+    ("nomemo", "(receipt_id: String, tx_hash: String)"),
+    ("setregt", "terms_hash: String"),
     (
         "setprice",
         "PriceUpdated { id, old_price, new_price, updater, revision }",
@@ -484,7 +493,6 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "txfrterms",
         "TransferWithTermsEvent { id, previous_owner, new_owner, terms_hash, attestation_reset }",
     ),
-    ("anchrxhst", "(resource_id: String, buyer: Address, attempts: AnchorAttempts)"),
     ("lease", "(resource_id: String, lease: Lease)"),
     ("leasesetl", "(resource_id: String, lease: Lease)"),
     ("leaserevk", "(resource_id: String, lease: Lease)"),
@@ -897,12 +905,6 @@ pub enum DataKey {
     RefundedAmount(String),
     /// Configured creator-refund window length, in ledgers.
     RefundWindow,
-    /// Ordered history of verification status changes for a verifier address.
-    VerifierHistory(Address),
-    /// Aggregated settled-payment earnings for a creator wallet address.
-    CreatorEarnings(Address),
-    /// Moderator who last set a resource's dispute flag or reason hash.
-    FlagModerator(String),
     /// Active lease held by `holder` on a resource.
     Lease(String, Address),
     /// Anchor attempt counter for `(resource_id, buyer)`.
@@ -978,27 +980,6 @@ pub enum DataKey {
     /// metadata or price change. Absent (read as `0`) until the first such
     /// mutation. Read by `get_revision`.
     Revision(String),
-    /// Registry-wide creator terms hash fallback, used by `get_terms_hash`
-    /// when a resource has no per-creator override.
-    RegistryTerms,
-    /// Creator-configured refund window in ledgers for payment receipts.
-    RefundWindow,
-    /// Ledger sequence after which a receipt is no longer refundable by its
-    /// creator. Written when the receipt is settled.
-    RefundDeadline(String),
-    /// Address entitled to receive a refund for a payment receipt.
-    PaymentRecipient(String),
-    /// A recorded refund for a payment receipt, keyed by `refund_id`.
-    RefundReceipt(String),
-    /// Cumulative refunded amount for a payment receipt id.
-    RefundedAmount(String),
-    /// Secondary index mapping a refund settlement tx hash to its `refund_id`.
-    RefundTxHash(String),
-    /// Rejected-attempt bookkeeping for a purchase-receipt anchor pair
-    /// `(resource_id, buyer)`.
-    AnchorAttempts(String, Address),
-    /// A time-limited access lease for `(resource_id, holder)`.
-    Lease(String, Address),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -1036,6 +1017,52 @@ pub struct MetadataUpdateEvent {
     pub new_metadata: String,
     /// Listing revision after this update (see `get_revision`).
     pub revision: u32,
+}
+
+/// One row of a bounded registry export (`export_page`).
+///
+/// A flattened projection of [`Resource`] for migration tooling: it carries
+/// only the fields an indexer needs to rebuild state elsewhere, and never
+/// the resource's metadata pointer.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResourceExport {
+    /// Catalog index (`DataKey::Index`) the resource was registered under.
+    /// Strictly increasing within and across pages.
+    pub index: u32,
+    pub id: String,
+    pub creator: Address,
+    pub state: ResourceState,
+    pub listed: bool,
+    /// Listed price in USDC base units.
+    pub price: i128,
+    pub verified: VerificationStatus,
+    pub frozen: bool,
+    /// `true` while a moderator dispute flag is active. The flag reason is
+    /// not exported.
+    pub flagged: bool,
+    /// `Resource` storage schema the entry was last written with. Entries
+    /// below `RESOURCE_SCHEMA_VERSION` still need `migrate_resource`.
+    pub schema_version: u32,
+    /// Monotonic write counter (`Resource.version`).
+    pub version: u32,
+    pub created_at: u32,
+    pub updated_at: u32,
+}
+
+/// One bounded page of `export_page`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExportPage {
+    /// [`EXPORT_VIEW_VERSION`] of the `items` layout.
+    pub export_version: u32,
+    /// `RESOURCE_SCHEMA_VERSION` of the contract that produced the page.
+    pub resource_schema_version: u32,
+    /// Total catalog index slots (`count`) when the page was read.
+    pub total: u32,
+    pub items: Vec<ResourceExport>,
+    /// Catalog index to pass back as `cursor`; `None` once the end is reached.
+    pub next_cursor: Option<u32>,
 }
 
 /// Structured payload published with the `setprice` event.
@@ -1249,8 +1276,6 @@ impl AnchorFailureReason {
                 Error::InvalidPaymentTransition
             }
             AnchorFailureReason::VerifierUnavailable => Error::AdminNotSet,
-            AnchorFailureReason::NoPaymentRecorded => Error::NotFound,
-            AnchorFailureReason::ReceiptHashMismatch => Error::InvalidTxHash,
         }
     }
 }
@@ -1409,6 +1434,18 @@ pub enum Error {
     /// soon after `nominate_new_admin` (before `ADMIN_NOMINATION_MIN_GAP`
     /// ledgers have elapsed).
     AdminNominationExpired = 50,
+    /// `set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`,
+    /// or duplicate pointers, or a `primary` index out of range.
+    InvalidMetadataPointers = 51,
+    /// `bootstrap_dual_admin` was called after an admin was already set.
+    AdminAlreadySet = 52,
+    /// `recover_admin` was called but no recovery admin is configured.
+    RecoveryAdminNotSet = 53,
+    /// A resource was written by a schema version this contract cannot migrate.
+    UnsupportedResourceSchema = 54,
+    /// A listing revision increment would exceed `u32::MAX`. The mutation is
+    /// rejected without changing resource state.
+    RevisionOverflow = 55,
 }
 
 #[contract]
@@ -1502,6 +1539,11 @@ impl VaultRegistry {
     /// `AlreadyRegistered` and leaves resource records, counters, indexes, and
     /// events unchanged — see the within-batch duplicate guard below.
     ///
+    /// An empty batch (`items.len() == 0`) is rejected with `BatchTooLarge`
+    /// to prevent callers from silently succeeding on a no-op they did not
+    /// intend, which would conceal bugs where the input list was never
+    /// populated.
+    ///
     /// Use case: Bulk onboarding of resources by publishers or automated systems.
     pub fn register_batch(
         env: Env,
@@ -1511,7 +1553,8 @@ impl VaultRegistry {
         creator.require_auth();
         Self::require_not_paused(&env)?;
 
-        if items.len() > MAX_BATCH_REGISTER {
+        // Reject both empty batches (concealed no-ops) and oversized ones.
+        if items.len() == 0 || items.len() > MAX_BATCH_REGISTER {
             return Err(Error::BatchTooLarge);
         }
 
@@ -1627,8 +1670,11 @@ impl VaultRegistry {
     /// validated before any price is written. If one item is invalid, no
     /// prices are changed. Duplicate IDs use the last supplied price.
     ///
-    /// The batch is capped at [`MAX_BATCH_PRICE_UPDATES`] items. A no-op price
-    /// update succeeds without writing storage or emitting `setprice`.
+    /// The batch is capped at [`MAX_BATCH_PRICE_UPDATES`] items. An empty
+    /// batch (`updates.len() == 0`) is rejected with `BatchTooLarge` to
+    /// prevent callers from silently succeeding on an unintended no-op. A
+    /// no-op price update (same price as current) succeeds without writing
+    /// storage or emitting `setprice`.
     pub fn set_price_many(
         env: Env,
         creator: Address,
@@ -1636,7 +1682,7 @@ impl VaultRegistry {
     ) -> Result<(), Error> {
         creator.require_auth();
         Self::require_not_paused(&env)?;
-        if updates.len() > MAX_BATCH_PRICE_UPDATES {
+        if updates.len() == 0 || updates.len() > MAX_BATCH_PRICE_UPDATES {
             return Err(Error::BatchTooLarge);
         }
 
@@ -1685,7 +1731,9 @@ impl VaultRegistry {
 
     /// Update the metadata pointer for a small bounded set of owned resources
     /// in one transaction. The batch is capped at
-    /// [`MAX_BATCH_METADATA_UPDATES`] items.
+    /// [`MAX_BATCH_METADATA_UPDATES`] items. An empty batch
+    /// (`updates.len() == 0`) is rejected with `BatchTooLarge` to prevent
+    /// callers from silently succeeding on an unintended no-op.
     ///
     /// Failure behavior is **atomic**: every item is validated (id format,
     /// ownership, metadata-freeze / content-hash rules, pointer validity)
@@ -1706,7 +1754,7 @@ impl VaultRegistry {
     ) -> Result<(), Error> {
         creator.require_auth();
         Self::require_not_paused(&env)?;
-        if updates.len() > MAX_BATCH_METADATA_UPDATES {
+        if updates.len() == 0 || updates.len() > MAX_BATCH_METADATA_UPDATES {
             return Err(Error::BatchTooLarge);
         }
 
@@ -1734,6 +1782,7 @@ impl VaultRegistry {
         }
 
         for (id, mut resource, metadata) in pending {
+            let revision = Self::bump_listing_revision(&env, &id)?;
             let old_metadata = resource.metadata.clone();
             resource.metadata = metadata.clone();
             Self::save(&env, &mut resource);
@@ -1746,6 +1795,7 @@ impl VaultRegistry {
                     id,
                     old_metadata,
                     new_metadata: metadata,
+                    revision,
                 },
             );
         }
@@ -2690,6 +2740,70 @@ impl VaultRegistry {
         result
     }
 
+    /// Bounded discovery read for the resources that carry a tag sharing a
+    /// normalized prefix.
+    ///
+    /// This complements [`list_by_tag`], which only resolves one exact tag.
+    /// The prefix is normalized with exactly the same rules tags are stored
+    /// with ([`Self::normalize_tag`]: trim ASCII whitespace, lowercase ASCII
+    /// letters), so `"  DATA "` resolves the same way as `"data"`.
+    ///
+    /// - A prefix that normalizes to the empty string would match every tag
+    ///   in the catalog, so it is rejected by returning an empty page.
+    /// - `cursor` is a global catalog index — the same domain as `list_page`
+    ///   and `list_listed_page`. It points at the first catalog entry that
+    ///   has not been scanned yet, so a page that matched nothing still
+    ///   advances and a later page cannot repeat an entry.
+    /// - `limit` is the maximum number of resources the page returns. It is
+    ///   clamped to `1..=[`LIST_PAGE_CAP`] (20): a `limit` of `0` still
+    ///   returns one match so the scan always makes progress and a client
+    ///   following the cursor can never be stuck on the same slot.
+    /// - Results are ordered by global registration sequence, so the order is
+    ///   deterministic for a given ledger state and does not depend on the
+    ///   prefix.
+    /// - Tombstoned resources are skipped, matching `list_by_tag`.
+    ///
+    /// The scan walks the global catalog index, so the cost of a call grows
+    /// with the size of the catalog; the returned page stays bounded.
+    pub fn search_by_tag_prefix(env: Env, prefix: String, cursor: u32, limit: u32) -> CatalogPage {
+        let norm_prefix = Self::normalize_tag(&env, &prefix);
+        if norm_prefix.is_empty() {
+            // An empty prefix would match every tag in the catalog.
+            return CatalogPage {
+                items: Vec::new(&env),
+                next_cursor: None,
+            };
+        }
+        let prefix_bytes = Self::string_bytes(&norm_prefix);
+        // Clamp the limit the same way `export_page` does: a page of zero
+        // entries with an unchanged cursor would strand a client that
+        // follows the cursor.
+        let page_size = limit.clamp(1, LIST_PAGE_CAP);
+        Self::scan_catalog(&env, cursor, page_size, |resource| {
+            resource.state != ResourceState::Tombstoned
+                && Self::has_tag_prefix(resource, &prefix_bytes)
+        })
+    }
+
+    /// Does `resource` carry at least one tag that starts with `prefix`?
+    ///
+    /// `prefix_bytes` is the normalized prefix as raw bytes, precomputed once
+    /// by the caller so the comparison stays allocation-light.
+    fn has_tag_prefix(resource: &Resource, prefix_bytes: &[u8]) -> bool {
+        if prefix_bytes.is_empty() {
+            return false;
+        }
+        for i in 0..resource.tags.len() {
+            let tag = resource.tags.get(i).unwrap();
+            let bytes = Self::string_bytes(&tag);
+            if bytes.len() >= prefix_bytes.len() && bytes[..prefix_bytes.len()] == prefix_bytes[..]
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn top_tags(env: Env, limit: u32) -> Vec<TagPopularity> {
         let page_size = limit.min(TOP_TAGS_CAP);
         if page_size == 0 {
@@ -2829,6 +2943,75 @@ impl VaultRegistry {
         Self::id_page(&env, &ids, cursor, limit, |resource| {
             resource.state != ResourceState::Tombstoned
         })
+    }
+
+    /// Paginated listing of the resources owned by `creator`, filtered by
+    /// listing state and lifecycle state.
+    ///
+    /// This is the filtered counterpart of [`list_by_creator_page`]: it walks
+    /// the same creator-scoped index with the same [`IdCursor`] pagination, so
+    /// a creator dashboard reads only its own inventory instead of scanning
+    /// the global catalog, and the two calls can be interleaved.
+    ///
+    /// - `cursor` is an [`IdCursor`]: `Start` for the first page, then the
+    ///   `next_cursor` returned by the previous call. It survives resources
+    ///   that leave the creator index (tombstones, transfers) exactly as it
+    ///   does for `list_by_creator_page`.
+    /// - `limit` is capped at [`LIST_PAGE_CAP`] (20). A `limit` of `0`
+    ///   returns an empty page.
+    /// - `listed` filters on the creator-facing listing projection:
+    ///   `Some(true)` keeps only resources in the `Listed` state,
+    ///   `Some(false)` keeps only resources that are *not* listed, and
+    ///   `None` keeps every resource.
+    /// - `state` filters on the explicit lifecycle state; `None` keeps every
+    ///   state.
+    /// - The two filters compose with AND: a resource is returned only when
+    ///   it satisfies both. A contradictory pair (`listed = Some(true)` with
+    ///   `state = Some(Delisted)`) therefore yields an empty page rather
+    ///   than an error.
+    /// - `next_cursor` resumes after the last resource the page returned, the
+    ///   same rule `list_by_creator_page` uses. Resources the filters reject
+    ///   are skipped; a page that matches nothing scans the rest of the
+    ///   creator index and ends the iteration with `IdCursor::End`.
+    ///
+    /// Tombstoned resources are removed from the creator's index by
+    /// `tombstone_resource` and are skipped on read, so
+    /// `state = Some(Tombstoned)` always yields an empty page. Use `get` /
+    /// `get_resource_state` to audit a tombstoned resource.
+    pub fn list_by_creator_page_filtered(
+        env: Env,
+        creator: Address,
+        cursor: IdCursor,
+        limit: u32,
+        listed: Option<bool>,
+        state: Option<ResourceState>,
+    ) -> IdPage {
+        let ids = Self::creator_list(&env, &creator);
+        Self::id_page(&env, &ids, cursor, limit, |resource| {
+            resource.state != ResourceState::Tombstoned
+                && Self::matches_creator_filters(resource, listed, state)
+        })
+    }
+
+    /// Apply the creator-page filters to `resource`.
+    ///
+    /// Both filters are independent predicates combined with AND.
+    fn matches_creator_filters(
+        resource: &Resource,
+        listed: Option<bool>,
+        state: Option<ResourceState>,
+    ) -> bool {
+        if let Some(want_listed) = listed {
+            if resource.listed != want_listed {
+                return false;
+            }
+        }
+        if let Some(want_state) = state {
+            if resource.state != want_state {
+                return false;
+            }
+        }
+        true
     }
 
     /// `list_by_tag` with an id-based cursor (see `list_by_creator_page`).
@@ -3706,12 +3889,28 @@ impl VaultRegistry {
     /// only rewrites the derived `Index`/`Count` pointers, so it's safe to
     /// re-run with the current correct id list as a no-op. See
     /// `docs/index-repair.md` for the full repair strategy.
+    ///
+    /// An empty `ids` list is a validated no-op: it returns `Ok(())` without
+    /// modifying any index slot or emitting a `reindex` event. Suppressing
+    /// the event matches `repair_tag_index`'s empty-list behavior — the
+    /// `reindex` payload is the signal operators and audit tooling use to see
+    /// that a repair ran, so emitting it for a zero-length list would assert
+    /// a repair that never touched the index.
+    ///
+    /// When `ids.len() < old_count`, stale `Index` slots in the range
+    /// `[ids.len(), old_count)` are removed from persistent storage so the
+    /// index is fully convergent after any number of repairs: two identical
+    /// calls to `repair_index` always produce byte-identical on-chain state.
     pub fn repair_index(env: Env, ids: Vec<String>) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
         let len = ids.len();
+
+        // Validate all inputs before any write so a failure leaves the index
+        // unchanged. Unknown IDs produce `NotFound`; duplicate IDs produce
+        // `DuplicateInRepair`.
         for i in 0..len {
             let id = ids.get(i).unwrap();
             if !env
@@ -3728,14 +3927,34 @@ impl VaultRegistry {
             }
         }
 
+        // An empty list is a validated no-op: nothing to index, nothing to
+        // remove, no event.
+        if len == 0 {
+            return Ok(());
+        }
+
         let old_count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
 
+        // Write the new index slots.
         for i in 0..len {
             let id = ids.get(i).unwrap();
             let idx_key = DataKey::Index(i);
             env.storage().persistent().set(&idx_key, &id);
             Self::bump_persistent(&env, &idx_key);
         }
+
+        // Remove stale index slots left over from a prior, larger repair so
+        // the index is fully convergent: running `repair_index` twice with the
+        // same list always yields the same on-chain state.
+        if old_count > len {
+            for i in len..old_count {
+                let stale_key = DataKey::Index(i);
+                if env.storage().persistent().has(&stale_key) {
+                    env.storage().persistent().remove(&stale_key);
+                }
+            }
+        }
+
         env.storage().instance().set(&DataKey::Count, &len);
         Self::bump_instance(&env);
 
@@ -4788,7 +5007,6 @@ impl VaultRegistry {
         }
         Self::validate_resource_id(&id)?;
         let mut resource = Self::load(&env, &id)?;
-        let was_flagged = resource.dispute_flag.is_flagged();
         resource.dispute_flag = DisputeFlag::Flagged(reason);
         Self::save(&env, &mut resource);
         Self::record_flag_moderator(&env, &id, &moderator);
@@ -6423,10 +6641,11 @@ impl VaultRegistry {
             }
             normalized.push(b);
         }
-        match core::str::from_utf8(&normalized) {
-            Ok(s) => String::from_str(env, s),
-            Err(_) => String::from_bytes(env, &normalized),
-        }
+        // The host validates UTF-8 when the bytes are handed to it
+        // (`string_new_from_slice`), so the normalized bytes can be passed
+        // straight through: trimming ASCII whitespace and lowercasing ASCII
+        // letters cannot invalidate the original UTF-8.
+        String::from_bytes(env, &normalized)
     }
 
     fn load_top_tags(env: &Env) -> Vec<TagPopularity> {
@@ -6645,12 +6864,7 @@ impl VaultRegistry {
         env.storage().instance().set(&DataKey::Count, &next_count);
         Self::bump_instance(&env);
 
-        let mut list = Self::creator_list(&env, &creator);
-        list.push_back(id.clone());
-        env.storage()
-            .persistent()
-            .set(&Self::creator_key(&env, &creator), &list);
-        Self::bump_persistent(&env, &Self::creator_key(&env, &creator));
+        Self::append_to_creator_index(&env, &creator, id.clone());
 
         Self::set_creator_count(&env, &creator, next_creator_count);
 

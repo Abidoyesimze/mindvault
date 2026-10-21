@@ -100,6 +100,8 @@ export function groupOf(name: string): string {
       "mindvault_registry_list",
       "mindvault_registry_health",
       "mindvault_registry_count",
+      "mindvault_registry_creator_page",
+      "mindvault_registry_tag_search",
       "mindvault_check_consistency",
       "mindvault_check_bindings",
       "mindvault_tx_status",

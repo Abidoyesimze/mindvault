@@ -35,7 +35,12 @@ import {
   parseUrlAllowlist,
 } from "./outboundUrl.js";
 import { CATALOG_MAX_LIMIT, CATALOG_SORT_VALUES } from "./catalogFilters.js";
-import { REGISTRY_LIST_MAX_LIMIT } from "./registryPagination.js";
+import {
+  REGISTRY_CURSOR_MAX_LENGTH,
+  REGISTRY_LIST_MAX_LIMIT,
+  REGISTRY_RESOURCE_STATES,
+  REGISTRY_TAG_MAX_LENGTH,
+} from "./registryPagination.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_ROW_FIELDS } from "./receipts.js";
 import { DEBUG_BUNDLE_MAX_AUDIT_LINES } from "./debugBundleSchema.js";
 import { SUPPORT_BUNDLE_MAX_AUDIT_LINES } from "./supportBundle.js";
@@ -262,7 +267,6 @@ const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
  */
 export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
   "mindvault_publish_status",
-  "mindvault_purchase_history",
   // items is an array of objects — the generic validator handles only flat
   // string/flag/hash/integer/enum/tag_array fields. Argument shape is enforced
   // by the input schema in tools.ts and validated inline in the dispatch handler.
@@ -401,6 +405,18 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   },
   mindvault_registry_count: {
     creator: { kind: "string" },
+  },
+  mindvault_registry_creator_page: {
+    creator: { ...STELLAR_ADDRESS, required: true },
+    cursor: { kind: "string", maxLength: REGISTRY_CURSOR_MAX_LENGTH },
+    limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
+    listed: { kind: "flag" },
+    state: { kind: "enum", values: REGISTRY_RESOURCE_STATES },
+  },
+  mindvault_registry_tag_search: {
+    prefix: { kind: "string", required: true, minLength: 1, maxLength: REGISTRY_TAG_MAX_LENGTH },
+    cursor: { kind: "integer", min: 0 },
+    limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
   },
   mindvault_tx_status: { txHash: { kind: "hash", required: true, bareHex: true } },
   // `confirm` is what resetGuard.isResetConfirmed reads. It was advertised in
@@ -626,6 +642,10 @@ function expectation(spec: ArgumentSpec): string {
       if (spec.maxLength) return `a string of up to ${spec.maxLength} characters`;
       return "a string";
     }
+    case "stellar_address":
+      return "a Stellar public key (G…)";
+    case "stellar_secret":
+      return "a Stellar secret seed (S…)";
   }
 }
 
@@ -1313,6 +1333,16 @@ export function optionalString(args: ValidatedArgs, field: string): string | und
 /** Read a validated flag, defaulting to false when the caller omitted it. */
 export function flag(args: ValidatedArgs, field: string): boolean {
   return args[field] === true;
+}
+
+/**
+ * Read an optional validated flag, keeping "absent" distinct from `false`.
+ *
+ * A filter argument that was not sent must reach the contract as `None`, not
+ * as `Some(false)`: the two mean "no filter" and "filter on false".
+ */
+export function optionalFlag(args: ValidatedArgs, field: string): boolean | undefined {
+  return typeof args[field] === "boolean" ? (args[field] as boolean) : undefined;
 }
 
 /** Read an optional validated integer, defaulting when the caller omitted it. */

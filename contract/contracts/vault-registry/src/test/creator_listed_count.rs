@@ -9,15 +9,15 @@
 
 /// Number of `creator`'s resources whose state is `Listed`, computed from the
 /// resources themselves rather than the counter under test.
+///
+/// The count is derived from a **full catalog scan** (`full_catalog_scan`,
+/// shared with `listed_count_matrix.rs`), not from the 20-item
+/// `list_by_creator` page: a creator that owns more than `LIST_PAGE_CAP`
+/// resources would otherwise be under-counted and the assertion below would
+/// silently pass on a truncated view.
 fn listed_by_scan(client: &VaultRegistryClient<'_>, creator: &Address) -> u32 {
-    let page = client.list_by_creator(creator, &0u32, &20u32);
-    let mut n = 0u32;
-    for i in 0..page.len() {
-        if page.get(i).unwrap().state == ResourceState::Listed {
-            n += 1;
-        }
-    }
-    n
+    let scan = full_catalog_scan(client);
+    expected_listed(&scan, Some(creator)).1
 }
 
 fn assert_counts(client: &VaultRegistryClient<'_>, creator: &Address, expected: u32) {
@@ -25,7 +25,7 @@ fn assert_counts(client: &VaultRegistryClient<'_>, creator: &Address, expected: 
     assert_eq!(
         client.creator_listed_count(creator),
         listed_by_scan(client, creator),
-        "creator_listed_count must agree with the listed resources in list_by_creator"
+        "creator_listed_count must agree with the listed resources in the catalog"
     );
 }
 

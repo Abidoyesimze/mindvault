@@ -15,6 +15,13 @@
  */
 
 import { catalogFilterInputProperties } from "./catalogFilters.js";
+import { ONCHAIN_PREFLIGHT_OUTPUT_SCHEMA } from "./onchainPreflight.js";
+import { MIGRATION_PREVIEW_OUTPUT_SCHEMA } from "./stateMigrationPreview.js";
+import {
+  SUPPORT_BUNDLE_DEFAULT_AUDIT_LINES,
+  SUPPORT_BUNDLE_MAX_AUDIT_LINES,
+  SUPPORT_BUNDLE_OUTPUT_SCHEMA,
+} from "./supportBundle.js";
 import { withToolErrorVariant } from "./outputValidation.js";
 import {
   AGENT_STATUS_OUTPUT_SCHEMA,
@@ -44,8 +51,10 @@ import {
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
   REGISTRY_COUNT_OUTPUT_SCHEMA,
+  REGISTRY_CREATOR_PAGE_OUTPUT_SCHEMA,
   REGISTRY_INFO_OUTPUT_SCHEMA,
   REGISTRY_LIST_OUTPUT_SCHEMA,
+  REGISTRY_TAG_SEARCH_OUTPUT_SCHEMA,
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
   RPC_HEALTH_OUTPUT_SCHEMA,
@@ -948,6 +957,96 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_registry_creator_page",
+    description:
+      "List one creator's on-chain resources with pagination and optional filters (contract list_by_creator_page_filtered). Returns compact summaries directly from Stellar, not the MindVault API catalog. Filter by listed state, lifecycle state, or both; the filters combine with AND, so a contradictory pair returns an empty page instead of an error. Pass the returned nextCursor back to fetch the next page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creator: {
+          type: "string",
+          description:
+            "Stellar public key (G…) whose resources to list. The page covers this creator's inventory only.",
+          examples: ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"],
+        },
+        cursor: {
+          type: "string",
+          description: "Opaque cursor from a previous page's nextCursor. Omit for the first page.",
+          examples: ["eyJ2IjoxLCJ0IjoiYSJ9"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Page size (1–20, default 20). The contract caps higher values at 20.",
+          examples: [20, 10],
+        },
+        listed: {
+          type: "boolean",
+          description:
+            "Filter on the listing projection: true keeps only listed resources, false keeps only unlisted ones. Omit to keep every resource.",
+          examples: [true, false],
+        },
+        state: {
+          type: "string",
+          enum: ["Listed", "Delisted", "Frozen", "Disputed", "Tombstoned"],
+          description:
+            "Filter on the lifecycle state. Omit to keep every state. Tombstoned resources are never returned, so that filter always yields an empty page.",
+          examples: ["Listed", "Frozen"],
+        },
+      },
+      required: ["creator"],
+    },
+    outputSchema: REGISTRY_CREATOR_PAGE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Creator Page",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_registry_tag_search",
+    description:
+      "Find on-chain resources whose tag starts with a prefix (contract search_by_tag_prefix). The prefix is normalized like a tag (trimmed, lowercased), so ' DATA ' matches 'data'. Returns a bounded page of compact summaries from Stellar, ordered by registration sequence; pass the returned nextCursor back to scan further. An empty prefix matches every tag and therefore returns nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prefix: {
+          type: "string",
+          minLength: 1,
+          maxLength: 32,
+          description:
+            "Tag prefix to match, e.g. 'dat' finds 'dataset' and 'data'. Normalized like a tag before matching.",
+          examples: ["dat", "science", "ml-"],
+        },
+        cursor: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Catalog index to resume from, as returned by a previous page's nextCursor. Omit for the first page.",
+          examples: [0, 20],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description:
+            "Maximum number of resources to return (1–20, default 20). The contract clamps higher values at 20 and always returns at least one match so the scan keeps making progress.",
+          examples: [20, 10],
+        },
+      },
+      required: ["prefix"],
+    },
+    outputSchema: REGISTRY_TAG_SEARCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Tag Search",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_registry_count",
     description:
       "Return on-chain resource counts directly from the vault-registry contract: total registered resources (count), currently listed resources (listed_count), and optionally how many resources a specific creator currently owns (creator_resource_count). Use this to get a quick summary of registry size without paging through all entries.",
@@ -1799,7 +1898,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // was invisible to the generated docs and the schema snapshots (#596).
     name: "mindvault_purchase_history",
     description:
-      "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Filter by resourceId and network (exact match), or search resource ids and titles with a case-insensitive query. Filters can be combined. Returns newest first. Each receipt includes a pre-resolved explorerUrl for the settlement transaction (null when no txHash was recorded) — no external join is needed. To check live on-chain settlement status, pass the receipt's txHash to mindvault_tx_status.",
+      "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Filter by resourceId and network (exact match), or search resource ids and titles with a case-insensitive query. Filters can be combined. Pass idempotencyKey to resolve a purchase attempt whose response was lost before a receipt arrived: returns status 'unknown'/'pending'/'settled'/'failed' for that key (profile-scoped). Returns newest first. Each receipt includes a pre-resolved explorerUrl for the settlement transaction (null when no txHash was recorded) — no external join is needed. To check live on-chain settlement status, pass the receipt's txHash to mindvault_tx_status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1819,6 +1918,12 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Optional case-insensitive text search across receipt resource ids and titles.",
           examples: ["stellar", "res-001"],
+        },
+        idempotencyKey: {
+          type: "string",
+          description:
+            "Optional. Client idempotency key sent with mindvault_buy to resolve a purchase whose response was lost before a receipt arrived. Profile-scoped.",
+          examples: ["buy:cm7x8y9z:9f3b..."],
         },
       },
       required: [],
