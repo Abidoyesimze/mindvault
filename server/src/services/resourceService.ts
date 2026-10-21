@@ -490,3 +490,32 @@ export async function getVerificationDetails(resourceId: string) {
       : null,
   };
 }
+
+
+export async function listCatalogPaginated(params: {
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const limit = params.limit ?? 20;
+  const offset = params.offset ?? 0;
+  return db
+    .select({
+      id: resources.id,
+      title: resources.title,
+      description: resources.description,
+      price: resources.price,
+      resourceType: resources.resourceType,
+      mimeType: resources.mimeType,
+      publisherName: publishers.name,
+      createdAt: resources.createdAt,
+    })
+    .from(resources)
+    .innerJoin(publishers, eq(resources.publisherId, publishers.id))
+    .where(eq(resources.listed, true))
+    .limit(limit)
+    .offset(offset);
+}
+
+export async function listCatalog(params: { limit?: number; offset?: number } = {}) {
+  return listCatalogPaginated(params);
+}
