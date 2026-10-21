@@ -5,7 +5,7 @@
 
 This file is a generated, human-readable summary of the MCP tool surface (ListTools). It is scoped to the `mcp/` package and intended as a quick reference for integrators and reviewers.
 
-Generated from `mcp/src/tools.ts` (65 tools).
+Generated from `mcp/src/tools.ts` (60 tools).
 
 ## Tools
 
@@ -67,7 +67,7 @@ Generated from `mcp/src/tools.ts` (65 tools).
 - `mindvault_rotate_publisher_key`: Rotate the publisher API key for the active profile. Calls the MindVault server rotation endpoint (POST /publishers/rotate-key), stores the new key in the state file, and returns the updated publisher ID. The old key is invalidated server-side. Requires an existing registration (mindvault_register).
 - `mindvault_verify_install`: Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.
 - `mindvault_debug_bundle`: Export a sanitized debug bundle to attach to a bug report or support ticket: resolved configuration, startup diagnostics, install checks, a profile summary (addresses only), state-file permissions, metrics, catalog cache status, and the tail of the audit log. Secret keys, API keys, and tokens never enter the bundle; public keys and contract ids are kept so it stays useful. Local and read-only, no network calls.
-- `mindvault_recover_catalog_cache`: Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.
+- `mindvault_recover_catalog_cache`: Catalog stale-cache recovery guidance: explains how to refresh catalog index data when browse results appear stale. Read-only; it does not invalidate or re-fetch anything itself.
 - `mindvault_publish_status`: Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for missing resourceId and 404s.
 - `mindvault_purchase_history`: List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Filter by resourceId and network (exact match), or search resource ids and titles with a case-insensitive query. Filters can be combined. Returns newest first. Each receipt includes a pre-resolved explorerUrl for the settlement transaction (null when no txHash was recorded) — no external join is needed. To check live on-chain settlement status, pass the receipt's txHash to mindvault_tx_status.
 - `mindvault_publish_batch`: Publish up to 10 link resources in a single batch. Each resource is created and verified via x402 payment individually (the agent wallet pays the verification fee per item), then all verified resources are registered on-chain in one `register_batch` Soroban transaction — a single wallet approval covers the entire batch. Returns a summary with per-item verification status, on-chain status, and the batch transaction hash.

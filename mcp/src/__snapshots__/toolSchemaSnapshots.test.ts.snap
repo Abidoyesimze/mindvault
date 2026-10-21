@@ -16,6 +16,10 @@ exports[`tool schema snapshots > mindvault_accept_transfer > input schema 1`] = 
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "resourceId": {
       "description": "The resource ID whose pending transfer to accept. Example: 'cm7x8y9z'",
       "examples": [
@@ -40,6 +44,7 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -68,7 +73,7 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -104,6 +109,16 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -300,8 +315,8 @@ exports[`tool schema snapshots > mindvault_agent_status > output schema 1`] = `
 exports[`tool schema snapshots > mindvault_backup_state > annotations 1`] = `
 {
   "destructiveHint": false,
-  "idempotentHint": true,
-  "readOnlyHint": true,
+  "idempotentHint": false,
+  "readOnlyHint": false,
   "title": "Back Up State",
 }
 `;
@@ -941,6 +956,10 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
       "oneOf": [
         {
           "properties": {
+            "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
+              "type": "boolean",
+            },
             "creator": {
               "type": "string",
             },
@@ -1019,6 +1038,16 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
               "type": "string",
             },
             "tier": {
+              "type": "string",
+            },
+            "txPhase": {
+              "description": ""settled" = USDC transfer polled to SUCCESS on-chain before this result was returned.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
               "type": "string",
             },
           },
@@ -1153,6 +1182,10 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > input schema 1`] = 
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "resourceId": {
       "description": "The resource ID whose pending transfer to cancel. Example: 'cm7x8y9z'",
       "examples": [
@@ -1177,6 +1210,7 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -1205,7 +1239,7 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -1241,6 +1275,16 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -2204,6 +2248,14 @@ exports[`tool schema snapshots > mindvault_export_receipts > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = `
 {
   "properties": {
+    "fields": {
+      "description": "Comma-separated subset of row fields to include, in order. Defaults to every field except sensitive ones. Known fields: resourceId, title, amount, currency, network, purchasedAt, txHash, receiptRef, explorerUrl, profile. Selecting a sensitive field (profile) is an explicit opt-in.",
+      "examples": [
+        "resourceId,amount,purchasedAt",
+        "resourceId,txHash,explorerUrl",
+      ],
+      "type": "string",
+    },
     "format": {
       "description": "Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope's csv field; "ndjson" renders each row as a JSON object on its own line in the envelope's ndjson field.",
       "enum": [
@@ -2228,6 +2280,14 @@ exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = 
       ],
       "type": "string",
     },
+    "includeSensitive": {
+      "description": "When true, keep sensitive fields (profile) in the default field set. Has no effect when fields is given.",
+      "examples": [
+        false,
+        true,
+      ],
+      "type": "boolean",
+    },
     "limit": {
       "description": "Max receipts to export, newest first (1–500).",
       "examples": [
@@ -2245,6 +2305,15 @@ exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = 
         "stellar:pubnet",
       ],
       "type": "string",
+    },
+    "offset": {
+      "description": "Rows to skip from the newest receipt, for resumable paging. The envelope's nextOffset is the value to pass here on the next call.",
+      "examples": [
+        0,
+        500,
+      ],
+      "minimum": 0,
+      "type": "integer",
     },
     "resourceId": {
       "description": "Export only receipts for this resource id.",
@@ -2282,7 +2351,7 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
     {
       "properties": {
         "count": {
-          "description": "Number of exported receipts.",
+          "description": "Number of receipts on this page.",
           "type": "integer",
         },
         "csv": {
@@ -2292,6 +2361,25 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
         "currency": {
           "const": "USDC",
           "type": "string",
+        },
+        "fields": {
+          "description": "Row fields carried by this export, in selection order.",
+          "items": {
+            "enum": [
+              "resourceId",
+              "title",
+              "amount",
+              "currency",
+              "network",
+              "purchasedAt",
+              "txHash",
+              "receiptRef",
+              "explorerUrl",
+              "profile",
+            ],
+            "type": "string",
+          },
+          "type": "array",
         },
         "filters": {
           "description": "The filters this export was produced with; null where unset.",
@@ -2315,6 +2403,12 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
             "network": {
               "type": [
                 "string",
+                "null",
+              ],
+            },
+            "offset": {
+              "type": [
+                "integer",
                 "null",
               ],
             },
@@ -2343,6 +2437,7 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
             "since",
             "until",
             "limit",
+            "offset",
             "groupBy",
           ],
           "type": "object",
@@ -2392,7 +2487,15 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
           "description": "Newline-Delimited JSON document of the same rows. Present only when format is "ndjson".",
           "type": "string",
         },
+        "nextOffset": {
+          "description": "Offset to pass on the next call to resume, or null when this is the last page.",
+          "type": [
+            "integer",
+            "null",
+          ],
+        },
         "receipts": {
+          "description": "One object per receipt, carrying only the selected fields (every field except sensitive ones by default).",
           "items": {
             "properties": {
               "amount": {
@@ -2410,6 +2513,13 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
               },
               "network": {
                 "type": "string",
+              },
+              "profile": {
+                "description": "Local wallet profile the purchase was made under. Sensitive — present only when selected.",
+                "type": [
+                  "string",
+                  "null",
+                ],
               },
               "purchasedAt": {
                 "type": "string",
@@ -2436,17 +2546,6 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
                 ],
               },
             },
-            "required": [
-              "resourceId",
-              "title",
-              "amount",
-              "currency",
-              "network",
-              "purchasedAt",
-              "txHash",
-              "receiptRef",
-              "explorerUrl",
-            ],
             "type": "object",
           },
           "type": "array",
@@ -2459,13 +2558,20 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
           "description": "Sum of the exported amounts as a decimal string.",
           "type": "string",
         },
+        "totalMatching": {
+          "description": "Rows matching the filters before pagination; larger than count on a partial page.",
+          "type": "integer",
+        },
       },
       "required": [
         "schema",
         "generatedAt",
         "format",
         "filters",
+        "fields",
         "count",
+        "totalMatching",
+        "nextOffset",
         "totalAmount",
         "currency",
         "receipts",
@@ -2697,6 +2803,7 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -2725,7 +2832,7 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -2761,6 +2868,16 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -2889,6 +3006,124 @@ exports[`tool schema snapshots > mindvault_import_profiles > input schema 1`] = 
   "properties": {
     "data": {
       "description": "JSON profile-export payload.",
+      "type": "string",
+    },
+  },
+  "required": [
+    "data",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_import_profiles > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "imported": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "imported",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_import_profiles > annotations 1`] = `
+{
+  "destructiveHint": true,
+  "idempotentHint": false,
+  "readOnlyHint": false,
+  "title": "Import Profile Setup",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_import_profiles > input schema 1`] = `
+{
+  "properties": {
+    "confirm": {
+      "description": "Must be true to persist the wallet. Without it the tool derives and displays the address but writes nothing, so the agent can verify the address before committing.",
+      "examples": [
+        true,
+      ],
+      "type": "boolean",
+    },
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
+      "type": "boolean",
+    },
+    "profile": {
+      "description": "Optional profile name to import into. Defaults to the active profile.",
+      "examples": [
+        "testnet",
+        "mainnet-publisher",
+      ],
+      "type": "string",
+    },
+    "secretKey": {
+      "description": "Stellar secret key (S… , 56 chars) to import. If omitted, reads from MINDVAULT_AGENT_SECRET env var.",
+      "examples": [
+        "SCHZPJ...",
+      ],
       "type": "string",
     },
   },
@@ -3403,6 +3638,174 @@ exports[`tool schema snapshots > mindvault_mainnet_banner > input schema 1`] = `
 `;
 
 exports[`tool schema snapshots > mindvault_mainnet_banner > output schema 1`] = `null`;
+
+exports[`tool schema snapshots > mindvault_metadata_diff > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Metadata Diff",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_metadata_diff > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "The resource ID to compare between the API catalog and the on-chain vault-registry.",
+      "examples": [
+        "swcn98besxpp6t1u8e77fqz3",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_metadata_diff > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "apiFound": {
+          "type": "boolean",
+        },
+        "apiSource": {
+          "type": "string",
+        },
+        "discrepancyCount": {
+          "type": "integer",
+        },
+        "fields": {
+          "items": {
+            "properties": {
+              "api": {},
+              "field": {
+                "type": "string",
+              },
+              "onchain": {},
+              "status": {
+                "enum": [
+                  "match",
+                  "mismatch",
+                  "missing_api",
+                  "missing_onchain",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "field",
+              "status",
+              "api",
+              "onchain",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "network": {
+          "type": "string",
+        },
+        "onchainError": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "onchainFound": {
+          "type": "boolean",
+        },
+        "onchainSource": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "rpc": {
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+        "x402Network": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "resourceId",
+        "apiFound",
+        "onchainFound",
+        "onchainError",
+        "fields",
+        "discrepancyCount",
+        "summary",
+        "apiSource",
+        "onchainSource",
+        "network",
+        "x402Network",
+        "rpc",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_metrics > annotations 1`] = `
 {
@@ -5105,7 +5508,7 @@ exports[`tool schema snapshots > mindvault_recover_catalog_cache > annotations 1
 {
   "destructiveHint": false,
   "idempotentHint": true,
-  "readOnlyHint": false,
+  "readOnlyHint": true,
   "title": "Recover Catalog Cache",
 }
 `;
@@ -5197,7 +5600,7 @@ exports[`tool schema snapshots > mindvault_recover_catalog_cache > output schema
 
 exports[`tool schema snapshots > mindvault_register > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Register Publisher",
@@ -5918,7 +6321,7 @@ exports[`tool schema snapshots > mindvault_registry_lookup > output schema 1`] =
 
 exports[`tool schema snapshots > mindvault_repair_sponsored_account > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": true,
   "readOnlyHint": false,
   "title": "Repair Sponsored Account",
@@ -6079,7 +6482,7 @@ exports[`tool schema snapshots > mindvault_restore_state > output schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_rotate_publisher_key > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Rotate Publisher Key",
@@ -6164,6 +6567,7 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6192,7 +6596,7 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6228,6 +6632,16 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -6813,6 +7227,7 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -6841,7 +7256,7 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -6877,6 +7292,16 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -7045,6 +7470,7 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -7073,7 +7499,7 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -7109,6 +7535,16 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -7282,7 +7718,7 @@ exports[`tool schema snapshots > mindvault_set_tags > output schema 1`] = `null`
 
 exports[`tool schema snapshots > mindvault_setup_wallet > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Set Up Wallet",
@@ -7731,6 +8167,10 @@ exports[`tool schema snapshots > mindvault_terms > input schema 1`] = `
       "description": "Required for set on mainnet (or set MINDVAULT_ALLOW_MAINNET=1).",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "creator": {
       "description": "Creator Stellar address to inspect. Optional for get when a wallet is active; set always uses the active wallet.",
       "type": "string",
@@ -7812,6 +8252,7 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -7840,7 +8281,7 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -7876,6 +8317,16 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -8182,6 +8633,7 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
         {
           "properties": {
             "confirmed": {
+              "description": "true only when txPhase is "settled". Deprecated: prefer txPhase.",
               "type": "boolean",
             },
             "listed": {
@@ -8210,7 +8662,7 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
               "type": "string",
             },
             "status": {
-              "description": ""success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
+              "description": ""success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.",
               "type": "string",
             },
             "statusLookup": {
@@ -8246,6 +8698,16 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
                 "string",
                 "null",
               ],
+            },
+            "txPhase": {
+              "description": "Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.",
+              "enum": [
+                "simulated",
+                "submitted",
+                "included",
+                "settled",
+              ],
+              "type": "string",
             },
           },
           "required": [
@@ -9062,6 +9524,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_lease_status",
   "mindvault_list_profiles",
   "mindvault_mainnet_banner",
+  "mindvault_metadata_diff",
   "mindvault_metrics",
   "mindvault_migration_preview",
   "mindvault_network_profile",

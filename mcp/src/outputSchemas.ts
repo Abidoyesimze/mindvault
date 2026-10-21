@@ -38,9 +38,11 @@ export const CATALOG_LIST_OUTPUT_SCHEMA = {
   properties: {
     items: { type: "array", items: CATALOG_ITEM_SCHEMA },
     notice: { type: ["string", "null"] },
+    cacheStatus: { type: "string", enum: ["live", "bypassed", "offline"] },
+    nextCursor: { type: ["string", "null"] },
     truncated: { type: "boolean" },
   },
-  required: ["items", "notice", "truncated"],
+  required: ["items", "notice", "cacheStatus", "nextCursor", "truncated"],
 } as const;
 
 export const WALLET_SETUP_OUTPUT_SCHEMA = {
@@ -211,8 +213,18 @@ export const PREVIEW_OUTPUT_SCHEMA = {
     verificationStatus: {},
     accessUrl: {},
     offlineCache: { type: "string" },
+    cacheStatus: { type: "string", enum: ["live", "bypassed", "offline"] },
   },
-  required: ["id", "title", "description", "price", "type", "verificationStatus", "accessUrl"],
+  required: [
+    "id",
+    "title",
+    "description",
+    "price",
+    "type",
+    "verificationStatus",
+    "accessUrl",
+    "cacheStatus",
+  ],
 } as const;
 
 const DRY_RUN_SCHEMA = {
@@ -321,6 +333,16 @@ const LEASE_BUY_SUCCESS_SCHEMA = {
   type: "object",
   properties: {
     status: { type: "string", const: "success" },
+    txPhase: {
+      type: "string",
+      enum: ["simulated", "submitted", "included", "settled"],
+      description:
+        '"settled" = USDC transfer polled to SUCCESS on-chain before this result was returned.',
+    },
+    confirmed: {
+      type: "boolean",
+      description: 'true only when txPhase is "settled". Deprecated: prefer txPhase.',
+    },
     resourceId: { type: "string" },
     tier: { type: "string" },
     creator: { type: "string" },
@@ -657,7 +679,13 @@ const ONCHAIN_MUTATION_SUCCESS = {
     status: {
       type: "string",
       description:
-        '"success" once confirmed; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.',
+        '"success" once settled on-chain; "submitted" when the transaction was accepted but its outcome could not be read (poll timeout or RPC outage) — check it with statusLookup instead of resubmitting.',
+    },
+    txPhase: {
+      type: "string",
+      enum: ["simulated", "submitted", "included", "settled"],
+      description:
+        'Explicit transaction phase. "settled" = getTransaction returned SUCCESS (confirmed on-chain). "submitted" = accepted by RPC but outcome not yet read. Never "simulated" on the settled path.',
     },
     resourceId: { type: "string" },
     txHash: { type: ["string", "null"] },
@@ -665,7 +693,10 @@ const ONCHAIN_MUTATION_SUCCESS = {
     price: { type: "string" },
     newCreator: { type: "string" },
     listed: { type: "boolean" },
-    confirmed: { type: "boolean" },
+    confirmed: {
+      type: "boolean",
+      description: 'true only when txPhase is "settled". Deprecated: prefer txPhase.',
+    },
     reason: { type: "string", enum: ["confirmation_timeout", "rpc_unavailable"] },
     statusLookup: TX_STATUS_LOOKUP_SCHEMA,
     message: { type: "string" },
@@ -852,4 +883,51 @@ export const PROFILE_IMPORT_OUTPUT_SCHEMA = {
   type: "object",
   properties: { imported: { type: "array", items: { type: "string" } } },
   required: ["imported"],
+} as const;
+
+export const METADATA_DIFF_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    resourceId: { type: "string" },
+    apiFound: { type: "boolean" },
+    onchainFound: { type: "boolean" },
+    onchainError: { type: ["string", "null"] },
+    fields: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          field: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["match", "mismatch", "missing_api", "missing_onchain"],
+          },
+          api: {},
+          onchain: {},
+        },
+        required: ["field", "status", "api", "onchain"],
+      },
+    },
+    discrepancyCount: { type: "integer" },
+    summary: { type: "string" },
+    apiSource: { type: "string" },
+    onchainSource: { type: "string" },
+    network: { type: "string" },
+    x402Network: { type: "string" },
+    rpc: { type: "string" },
+  },
+  required: [
+    "resourceId",
+    "apiFound",
+    "onchainFound",
+    "onchainError",
+    "fields",
+    "discrepancyCount",
+    "summary",
+    "apiSource",
+    "onchainSource",
+    "network",
+    "x402Network",
+    "rpc",
+  ],
 } as const;

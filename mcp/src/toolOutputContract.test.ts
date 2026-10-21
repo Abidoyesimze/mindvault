@@ -280,6 +280,23 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       missingInOnchain: [],
       summary: "consistent",
     }),
+  mindvault_metadata_diff: () =>
+    json({
+      resourceId: "mock-1",
+      apiFound: true,
+      onchainFound: true,
+      onchainError: null,
+      fields: [
+        { field: "price", status: "match", api: "5.0000000 USDC", onchain: "5.0000000 USDC" },
+      ],
+      discrepancyCount: 0,
+      summary: "All compared fields match between the API catalog and the on-chain registry.",
+      apiSource: "https://mindvault.example.com",
+      onchainSource: CONTRACT,
+      network: "Test SDF Network ; September 2015",
+      x402Network: "stellar:testnet",
+      rpc: "https://soroban-testnet.stellar.org",
+    }),
   mindvault_tx_status: () =>
     json({ status: "SUCCESS", hash: TX, ledger: 12, ledgerCloseTime: null }),
   mindvault_freeze: () => json({ status: "success", resourceId: "mock-1", txHash: TX }),

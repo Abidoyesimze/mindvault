@@ -189,10 +189,45 @@ opt-in per call site, and the payment path never opts in.
 - A malformed value falls back to the default rather than failing startup.
 
 Retried conditions: transport failures (`fetch failed`, `ECONNREFUSED`,
-`ENOTFOUND`, …), request timeouts, and HTTP 408, 425, 429, 500, 502, 503, 504.
-A caller-initiated abort is never retried — the caller asked to stop. Client
-errors (400, 401, 402, 403, 404, 409, 422) are not retried because retrying
-cannot fix them.
+`ECONNRESET`, `ENOTFOUND`, `socket hang up`, …), request timeouts, and HTTP
+408, 425, 429, 500, 502, 503, 504. A caller-initiated abort is never retried —
+the caller asked to stop. Client errors (400, 401, 402, 403, 404, 409, 422) are
+not retried because retrying cannot fix them.
+
+#### Deterministic failures stop at the first attempt
+
+A failure that describes the request itself fails the same way on every
+attempt, so retrying it only delays the error by the whole backoff schedule
+(and, for a rejected credential, presents it to the API again).
+[`isRetryableError`](../mcp/src/retry.ts) decides in this order, and the first
+match wins:
+
+| Failure                                                                                                   | Attempts  | Backoff   |
+| --------------------------------------------------------------------------------------------------------- | --------- | --------- |
+| Caller abort (`AbortError`)                                                                               | 1         | none      |
+| Request deadline (`TimeoutError`)                                                                         | all       | jittered  |
+| `ToolValidationError`, `UnknownToolError`, `ResponseSizeLimitError`, `SyntaxError` (malformed input/body) | 1         | none      |
+| Mapped error with an HTTP status: retryable set above, otherwise not (401/403 → `auth`, 400/422 …)        | by status | by status |
+| Mapped `auth`, `validation`, `payment`, `not_found`, `conflict`, `contract` category                      | 1         | none      |
+| Mapped `network`, `timeout`, `rate_limit`, `server` category                                              | all       | jittered  |
+| Error carrying `status` / `statusCode` / `response.status`                                                | by status | by status |
+| Soroban contract or host error (`Error(Contract, #n)`, `Error(Auth, …)`, `HostError`)                     | 1         | none      |
+| Socket `errno` code (`ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, `ENOTFOUND`, `EPIPE`, …)     | all       | jittered  |
+| Transport message (`fetch failed`, `network error`, `socket hang up`, `timed out`) or such a `cause`      | all       | jittered  |
+| Anything else                                                                                             | 1         | none      |
+
+The message check is deliberately narrow. It used to match any `network` or
+`timeout` substring, so a contract's `NetworkIdMismatch`, a host
+`Error(Auth, …)` mentioning the network, or an argument error about a timeout
+value was replayed as if the connection had dropped. The category or status of
+a mapped error is now checked before its text, so an `auth` failure whose
+guidance mentions the network is not retried either.
+
+With the default policy a deterministic failure makes one request and sleeps
+not at all; a transient one makes `MINDVAULT_RETRY_ATTEMPTS` requests with the
+jittered backoff above. `mcp/src/retryClassification.test.ts` pins both, per
+failure kind, and `mcp/src/toolRetries.test.ts` checks the request count per
+HTTP status through `mindvault_browse` and `mindvault_tx_status`.
 
 When a server sends `Retry-After`, it is honoured in place of computed backoff,
 clamped to the max delay so a mistaken or hostile header cannot stall a call.

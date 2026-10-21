@@ -254,6 +254,21 @@ export function correlationIdOf(result: ResultWithMeta | null | undefined): stri
   return typeof value === "string" ? value : undefined;
 }
 
+/** Outbound HTTP header carrying the in-flight call's ID to MindVault services. */
+export const CORRELATION_HEADER = "x-request-id";
+
+/**
+ * Headers for an outbound request made during a tool call: `extra` plus
+ * {@link CORRELATION_HEADER} when a call is in flight, so a server-side log
+ * line can be matched to the tool call that caused it. Outside a call the
+ * header is omitted rather than invented, for the same reason
+ * {@link currentCorrelationId} returns `undefined`.
+ */
+export function correlationHeaders(extra?: Record<string, string>): Record<string, string> {
+  const id = currentCorrelationId();
+  return id ? { ...extra, [CORRELATION_HEADER]: id } : { ...extra };
+}
+
 /**
  * A one-line suffix for an error message, so the ID reaches the user in the
  * one case where they are likely to report it.

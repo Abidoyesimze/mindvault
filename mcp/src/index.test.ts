@@ -1002,7 +1002,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
         // Horizon balance: enough USDC
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1040,7 +1047,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
         // Horizon: insufficient balance
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "1.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "1.00",
+              },
+            ],
           }),
         );
       }
@@ -1067,7 +1081,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "999.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "999.00",
+              },
+            ],
           }),
         );
       }
@@ -1089,6 +1110,67 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
   it("throws when no wallet is configured", async () => {
     _setAgentWallet(null);
     await expect(buy("res-001")).rejects.toThrow("No wallet");
+  });
+
+  it("rejects counterfeit USDC: reports no-trustline when only a fake USDC is present (#1053)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        // A counterfeit "USDC" with a different issuer — should NOT be selected.
+        return Promise.resolve(
+          mockResponse({
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE",
+                balance: "5000.0000000",
+              },
+              { asset_type: "native", balance: "100.0000000" },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse({ id: "res-001", title: "Doc", price: "5.00" }));
+    });
+
+    const result = await walletInfo();
+    // The counterfeit should be invisible — no-trustline status, zero USDC.
+    expect(result).toContain("USDC Balance: 0");
+    expect(result).toContain("no-trustline");
+  });
+
+  it("selects only canonical USDC when both real and counterfeit are present (#1053)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        return Promise.resolve(
+          mockResponse({
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE",
+                balance: "5000.0000000",
+              },
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "42.0000000",
+              },
+              { asset_type: "native", balance: "100.0000000" },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse({ id: "res-001", title: "Doc", price: "5.00" }));
+    });
+
+    const result = await walletInfo();
+    // Only the canonical (42.0000000) should be reported, not the counterfeit (5000).
+    expect(result).toContain("USDC Balance: 42.0000000");
+    expect(result).not.toContain("USDC Balance: 5000.0000000");
   });
 });
 
@@ -1116,7 +1198,14 @@ describe("buy – output shape for agent consumption", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1180,7 +1269,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1223,7 +1319,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1261,7 +1364,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1292,11 +1402,10 @@ describe("dry-run – publish validation", () => {
     _setAgentWallet(testWallet);
     _setAgentApiKey("test-api-key");
     _setMockMode(true);
-    // The dry run reads live /agent/status best-effort (#856); keep the test
-    // offline and fast instead of hitting the real API.
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      mockResponse({ agent: { pricePerVerification: 0.01 } }),
-    );
+    // A dry-run publish reads /agent/status and the wallet balance live
+    // (best-effort). Keep those reads offline so the suite never waits on the
+    // real API or Horizon; the dry run reports the failed read and proceeds.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch failed"));
   });
 
   afterEach(() => {
@@ -1831,8 +1940,11 @@ describe("setupWallet – sponsored account failure diagnostics", () => {
 });
 
 describe("repairSponsoredAccount", () => {
-  const secretKey = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-  const publicKey = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  // SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY is a real StrKey-valid
+  // secret seed (derived from Buffer.alloc(32, 0x01)). The test mocks Keypair.fromSecret
+  // so the key is never used for real cryptographic operations.
+  const secretKey = "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY";
+  const publicKey = "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR";
 
   beforeEach(() => {
     _resetProfiles();
@@ -1854,7 +1966,12 @@ describe("repairSponsoredAccount", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "2.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "0.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "0.0000000",
+          },
         ],
       }),
     );
@@ -1966,7 +2083,12 @@ describe("multi-wallet profiles", () => {
           subentry_count: 2,
           balances: [
             { asset_type: "native", balance: "100.0000000" },
-            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "12.5" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+              balance: "12.5",
+            },
           ],
         }),
       ),
@@ -2029,7 +2151,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "5.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "0.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "0.0000000",
+          },
         ],
       }),
     );
@@ -2049,7 +2176,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "50.1234567" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "99.9999999" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "99.9999999",
+          },
         ],
       }),
     );
@@ -2069,7 +2201,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 5, // 5 trustlines/offers/signers
         balances: [
           { asset_type: "native", balance: "20.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "10.0" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "10.0",
+          },
         ],
       }),
     );
@@ -2085,7 +2222,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "1.0000000" }, // exactly the reserve
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "5.0" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "5.0",
+          },
         ],
       }),
     );
@@ -2830,10 +2972,12 @@ describe("API health preflight before mutation tools (#603)", () => {
       dryRun: true,
     });
     expect(JSON.parse(result).mode).toBe("dry-run");
-    // Exactly one call: the dry run's read-only /agent/status fee lookup
-    // (#856). The #603 health gate would have issued its own call first, so
-    // two-or-more calls would mean the preflight was not skipped.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The dry run may read /agent/status and the balance live (#856), but it
+    // never runs the GET /resources reachability preflight.
+    const preflightCalls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => /\/resources(\?|$)/.test(url));
+    expect(preflightCalls).toEqual([]);
   });
 });
 
@@ -2919,7 +3063,12 @@ describe("setupWallet – half-completed sponsored creation", () => {
           subentry_count: 1,
           balances: [
             { asset_type: "native", balance: "10.0000000" },
-            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "25.0" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+              balance: "25.0",
+            },
           ],
         }),
       ),
