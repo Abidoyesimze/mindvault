@@ -5054,6 +5054,55 @@ fn fee_amount_calculation_handles_maximum_rate_and_large_amount() {
     assert_eq!(fee_amount(MAX_PRICE, MAX_FEE_BPS), 500_000_000_000_000_000);
 }
 
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    #[test]
+    fn cumulative_refunds_never_exceed_payment(
+        payment_amount in 10_000i128..1_000_000_000i128,
+        refund_bps in 1u32..=10_000u32,
+    ) {
+        let (env, creator, _admin, settler, client) = setup_with_settler();
+        let id = register_priced(&env, &creator, &client, "refundprp", payment_amount);
+        let payer = Address::generate(&env);
+        let payment_id = String::from_str(&env, "payprop01");
+        let first_refund = payment_amount * i128::from(refund_bps) / i128::from(FEE_BPS_DENOM);
+
+        client.record_payment(
+            &settler,
+            &payment_id,
+            &id,
+            &payer,
+            &payment_amount,
+            &String::from_str(&env, "paytxprop01"),
+        );
+        client.settle_payment(&settler, &payment_id);
+        client.record_creator_refund(
+            &creator,
+            &String::from_str(&env, "refundprop1"),
+            &payment_id,
+            &payer,
+            &first_refund,
+            &String::from_str(&env, "reftxprop01"),
+        );
+
+        let excess = payment_amount - first_refund + 1;
+        prop_assert_eq!(
+            client.try_record_creator_refund(
+                &creator,
+                &String::from_str(&env, "refundprop2"),
+                &payment_id,
+                &payer,
+                &excess,
+                &String::from_str(&env, "reftxprop02"),
+            ),
+            Err(Ok(Error::PaymentAmountMismatch)),
+        );
+        prop_assert!(client.get_refunded_amount(&payment_id) <= payment_amount);
+        prop_assert_eq!(client.get_refunded_amount(&payment_id), first_refund);
+    }
+}
+
 #[test]
 fn fee_config_accepts_zero_and_exact_combined_limit() {
     let (env, _creator, admin, client) = setup_with_admin();
