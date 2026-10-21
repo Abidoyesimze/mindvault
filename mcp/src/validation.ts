@@ -44,6 +44,7 @@ import {
   MIN_SETTLEMENT_INTERVAL_MS,
   TRANSACTION_WAIT_POLICIES,
 } from "./settlement.js";
+import { StrKey } from "@stellar/stellar-sdk";
 
 // ── Spec model ────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,8 @@ export type ArgumentKind =
   | "enum"
   | "flag"
   | "hash"
+  | "stellar_address"
+  | "stellar_secret"
   | "tag_array"
   | "string_array"
   | "url"
@@ -178,12 +181,16 @@ const CONFIRM_PAID: ArgumentSpec = { kind: "flag" };
 /** Preview flag: publish/buy report what they would do without paying. */
 const DRY_RUN: ArgumentSpec = { kind: "flag" };
 
-/** Stellar public key (G... 56 chars). */
+/**
+ * Stellar Ed25519 public key (G… 56 chars).
+ *
+ * Uses the `stellar_address` kind so that both the StrKey format and the
+ * CRC-16 checksum are verified locally before any Horizon or Soroban RPC
+ * request is made. A key that passes the character-set regex but fails the
+ * checksum will be caught here and reported with a field-specific error.
+ */
 const STELLAR_ADDRESS: ArgumentSpec = {
-  kind: "string",
-  maxLength: 56,
-  pattern: /^G[A-Z2-7]{55}$/,
-  patternHint: "a Stellar public key (G… , 56 chars)",
+  kind: "stellar_address",
 };
 
 /** Metadata pointer (max 512 chars, supported prefix). */
@@ -269,11 +276,8 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_setup_wallet: { profile: PROFILE_NAME, confirmMainnet: CONFIRM_MAINNET },
   mindvault_repair_sponsored_account: {
     secretKey: {
-      kind: "string",
+      kind: "stellar_secret",
       required: true,
-      maxLength: 56,
-      pattern: /^S[A-Z2-7]{55}$/,
-      patternHint: "a Stellar secret key (S… , 56 chars)",
     },
     profile: PROFILE_NAME,
     confirmMainnet: CONFIRM_MAINNET,
@@ -301,12 +305,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
       pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
       patternHint: "an email address, e.g. agent@example.com",
     },
-    walletAddress: {
-      kind: "string",
-      maxLength: 56,
-      pattern: /^G[A-Z2-7]{55}$/,
-      patternHint: "a Stellar public key (G… , 56 chars)",
-    },
+    walletAddress: STELLAR_ADDRESS,
     confirmMainnet: CONFIRM_MAINNET,
   },
   mindvault_publish: {
@@ -498,10 +497,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_mainnet_banner: {},
   mindvault_import_wallet: {
     secretKey: {
-      kind: "string",
-      maxLength: 56,
-      pattern: /^S[A-Z2-7]{55}$/,
-      patternHint: "a Stellar secret key (S… , 56 chars)",
+      kind: "stellar_secret",
     },
     profile: PROFILE_NAME,
     confirm: { kind: "flag" },
@@ -531,6 +527,8 @@ export type ValidationIssueCode =
   | "pattern_mismatch"
   | "not_in_enum"
   | "invalid_hash"
+  | "invalid_stellar_address"
+  | "invalid_stellar_secret"
   | "invalid_tag_array"
   | "invalid_string_array"
   | "blocked_url";
@@ -777,6 +775,96 @@ function validateStringArray(
     }
   }
   return normalized;
+}
+
+/**
+ * Validate a Stellar Ed25519 public key (stellar_address kind).
+ *
+ * StrKey.isValidEd25519PublicKey performs both a format check and a CRC-16
+ * checksum verification, so a key that passes the character-set regex but has
+ * a bad checksum (e.g. a single transposed character) is caught here rather
+ * than reaching Horizon or Soroban RPC where it would produce a confusing
+ * network error. The rejected value is never echoed back.
+ */
+function validateStellarAddress(
+  field: string,
+  value: unknown,
+  spec: ArgumentSpec,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (typeof value !== "string") {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a string; received ${typeName(value)}.`,
+    });
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    issues.push({
+      field,
+      code: "empty_string",
+      message: `${field} must not be empty. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  if (!StrKey.isValidEd25519PublicKey(trimmed)) {
+    issues.push({
+      field,
+      code: "invalid_stellar_address",
+      message: `${field} is not a valid Stellar public key. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Validate a Stellar Ed25519 secret seed (stellar_secret kind).
+ *
+ * StrKey.isValidEd25519SecretSeed performs both a format check and a CRC-16
+ * checksum verification. The rejected value is never echoed back to prevent
+ * secret leakage in agent transcripts.
+ */
+function validateStellarSecret(
+  field: string,
+  value: unknown,
+  spec: ArgumentSpec,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (typeof value !== "string") {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a string; received ${typeName(value)}.`,
+    });
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    issues.push({
+      field,
+      code: "empty_string",
+      message: `${field} must not be empty. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  if (!StrKey.isValidEd25519SecretSeed(trimmed)) {
+    issues.push({
+      field,
+      code: "invalid_stellar_secret",
+      message: `${field} is not a valid Stellar secret key. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  return trimmed;
 }
 
 function validateFlag(
@@ -1147,6 +1235,16 @@ export function validateToolArgs(tool: string, rawArgs: unknown): ValidatedArgs 
       case "hash": {
         const hash = validateHash(field, value, fieldSpec, issues);
         if (hash !== undefined) out[field] = hash;
+        break;
+      }
+      case "stellar_address": {
+        const addr = validateStellarAddress(field, value, fieldSpec, issues);
+        if (addr !== undefined) out[field] = addr;
+        break;
+      }
+      case "stellar_secret": {
+        const secret = validateStellarSecret(field, value, fieldSpec, issues);
+        if (secret !== undefined) out[field] = secret;
         break;
       }
       case "integer": {

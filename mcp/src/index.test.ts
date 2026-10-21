@@ -1931,8 +1931,11 @@ describe("setupWallet – sponsored account failure diagnostics", () => {
 });
 
 describe("repairSponsoredAccount", () => {
-  const secretKey = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-  const publicKey = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  // SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY is a real StrKey-valid
+  // secret seed (derived from Buffer.alloc(32, 0x01)). The test mocks Keypair.fromSecret
+  // so the key is never used for real cryptographic operations.
+  const secretKey = "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY";
+  const publicKey = "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR";
 
   beforeEach(() => {
     _resetProfiles();
