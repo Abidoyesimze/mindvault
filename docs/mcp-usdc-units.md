@@ -14,6 +14,10 @@ times more or less than it should. The dangerous direction is quiet: a stroop
 count read as a decimal balance reports a wallet as richly funded and waves an
 unaffordable payment through.
 
+Payment and refund amounts recorded by the vault-registry are also stroops.
+Refund records are cumulative per payment receipt, and the contract rejects a
+refund that would make the total exceed the original settled payment amount.
+
 Source: [`mcp/src/usdcAmount.ts`](../mcp/src/usdcAmount.ts).
 
 ## One conversion, tagged at the boundary

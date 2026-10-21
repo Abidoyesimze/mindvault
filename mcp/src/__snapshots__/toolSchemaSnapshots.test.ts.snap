@@ -2994,102 +2994,6 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_import_profiles > annotations 1`] = `
 {
-  "destructiveHint": false,
-  "idempotentHint": true,
-  "readOnlyHint": false,
-  "title": "Import Profile Setup",
-}
-`;
-
-exports[`tool schema snapshots > mindvault_import_profiles > input schema 1`] = `
-{
-  "properties": {
-    "data": {
-      "description": "JSON profile-export payload.",
-      "type": "string",
-    },
-  },
-  "required": [
-    "data",
-  ],
-  "type": "object",
-}
-`;
-
-exports[`tool schema snapshots > mindvault_import_profiles > output schema 1`] = `
-{
-  "anyOf": [
-    {
-      "properties": {
-        "imported": {
-          "items": {
-            "type": "string",
-          },
-          "type": "array",
-        },
-      },
-      "required": [
-        "imported",
-      ],
-      "type": "object",
-    },
-    {
-      "properties": {
-        "troubleshooting": {
-          "properties": {
-            "action": {
-              "type": "string",
-            },
-            "category": {
-              "type": "string",
-            },
-            "detail": {
-              "type": [
-                "string",
-                "null",
-              ],
-            },
-            "schema": {
-              "const": "mindvault.troubleshooting/v1",
-              "type": "string",
-            },
-            "source": {
-              "type": "string",
-            },
-            "status": {
-              "type": [
-                "integer",
-                "null",
-              ],
-            },
-            "summary": {
-              "type": "string",
-            },
-          },
-          "required": [
-            "schema",
-            "source",
-            "category",
-            "status",
-            "summary",
-            "detail",
-            "action",
-          ],
-          "type": "object",
-        },
-      },
-      "required": [
-        "troubleshooting",
-      ],
-      "type": "object",
-    },
-  ],
-  "type": "object",
-}
-`;
-
-exports[`tool schema snapshots > mindvault_import_profiles > annotations 1`] = `
-{
   "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
@@ -5937,6 +5841,168 @@ exports[`tool schema snapshots > mindvault_registry_count > output schema 1`] = 
 }
 `;
 
+exports[`tool schema snapshots > mindvault_registry_creator_page > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Registry Creator Page",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_creator_page > input schema 1`] = `
+{
+  "properties": {
+    "creator": {
+      "description": "Stellar public key (G…) whose resources to list. The page covers this creator's inventory only.",
+      "examples": [
+        "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      ],
+      "type": "string",
+    },
+    "cursor": {
+      "description": "Opaque cursor from a previous page's nextCursor. Omit for the first page.",
+      "examples": [
+        "eyJ2IjoxLCJ0IjoiYSJ9",
+      ],
+      "type": "string",
+    },
+    "limit": {
+      "description": "Page size (1–20, default 20). The contract caps higher values at 20.",
+      "examples": [
+        20,
+        10,
+      ],
+      "maximum": 20,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "listed": {
+      "description": "Filter on the listing projection: true keeps only listed resources, false keeps only unlisted ones. Omit to keep every resource.",
+      "examples": [
+        true,
+        false,
+      ],
+      "type": "boolean",
+    },
+    "state": {
+      "description": "Filter on the lifecycle state. Omit to keep every state. Tombstoned resources are never returned, so that filter always yields an empty page.",
+      "enum": [
+        "Listed",
+        "Delisted",
+        "Frozen",
+        "Disputed",
+        "Tombstoned",
+      ],
+      "examples": [
+        "Listed",
+        "Frozen",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "creator",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_creator_page > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "contract": {},
+        "count": {
+          "type": "integer",
+        },
+        "creator": {
+          "type": "string",
+        },
+        "message": {
+          "type": "string",
+        },
+        "network": {},
+        "nextCursor": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "resources": {
+          "type": "array",
+        },
+        "rpc": {},
+        "source": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "source",
+        "creator",
+        "count",
+        "resources",
+        "nextCursor",
+        "contract",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_registry_health > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -6260,6 +6326,159 @@ exports[`tool schema snapshots > mindvault_registry_lookup > output schema 1`] =
       "required": [
         "source",
         "found",
+        "contract",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_tag_search > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Registry Tag Search",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_tag_search > input schema 1`] = `
+{
+  "properties": {
+    "cursor": {
+      "description": "Catalog index to resume from, as returned by a previous page's nextCursor. Omit for the first page.",
+      "examples": [
+        0,
+        20,
+      ],
+      "minimum": 0,
+      "type": "integer",
+    },
+    "limit": {
+      "description": "Maximum number of resources to return (1–20, default 20). The contract clamps higher values at 20 and always returns at least one match so the scan keeps making progress.",
+      "examples": [
+        20,
+        10,
+      ],
+      "maximum": 20,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "prefix": {
+      "description": "Tag prefix to match, e.g. 'dat' finds 'dataset' and 'data'. Normalized like a tag before matching.",
+      "examples": [
+        "dat",
+        "science",
+        "ml-",
+      ],
+      "maxLength": 32,
+      "minLength": 1,
+      "type": "string",
+    },
+  },
+  "required": [
+    "prefix",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_registry_tag_search > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "contract": {},
+        "count": {
+          "type": "integer",
+        },
+        "cursor": {
+          "type": "integer",
+        },
+        "limit": {
+          "type": "integer",
+        },
+        "message": {
+          "type": "string",
+        },
+        "network": {},
+        "nextCursor": {
+          "type": [
+            "integer",
+            "null",
+          ],
+        },
+        "prefix": {
+          "type": "string",
+        },
+        "resources": {
+          "type": "array",
+        },
+        "rpc": {},
+        "source": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "source",
+        "prefix",
+        "cursor",
+        "limit",
+        "count",
+        "resources",
+        "nextCursor",
         "contract",
       ],
       "type": "object",
@@ -9540,10 +9759,12 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_register",
   "mindvault_register_onchain",
   "mindvault_registry_count",
+  "mindvault_registry_creator_page",
   "mindvault_registry_health",
   "mindvault_registry_info",
   "mindvault_registry_list",
   "mindvault_registry_lookup",
+  "mindvault_registry_tag_search",
   "mindvault_repair_sponsored_account",
   "mindvault_reset",
   "mindvault_resource_change_log",

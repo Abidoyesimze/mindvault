@@ -37,8 +37,10 @@ import {
   mockPendingTransfer,
   mockPublishBatch,
   mockRegistryCount,
+  mockRegistryCreatorPage,
   mockRegistryList,
   mockRegistryLookup,
+  mockRegistryTagSearch,
   mockSetListed,
   mockSetPrice,
   mockTransferOwnership,
@@ -112,6 +114,9 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
   mindvault_registry_lookup: () => mockRegistryLookup("mock-1", CONTRACT, ADDRESS),
   mindvault_registry_list: () => mockRegistryList(0, 10, CONTRACT, ADDRESS),
   mindvault_registry_count: () => mockRegistryCount(undefined, CONTRACT),
+  mindvault_registry_creator_page: () =>
+    mockRegistryCreatorPage(ADDRESS, undefined, 20, undefined, undefined, CONTRACT),
+  mindvault_registry_tag_search: () => mockRegistryTagSearch("dat", 0, 20, CONTRACT),
   mindvault_verify_attestation: () =>
     mockVerifyAttestation("mock1", "mock-attestation-1", CONTRACT),
   mindvault_buy_lease: () => mockBuyLease("mock-1", "day", false),

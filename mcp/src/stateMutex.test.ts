@@ -193,6 +193,7 @@ describe("stateMutex", () => {
       expect(serializesStateTool("mindvault_metrics")).toBe(false);
       expect(serializesStateTool("mindvault_check_state_permissions")).toBe(false);
       expect(serializesStateTool("mindvault_registry_health")).toBe(false);
+      expect(serializesStateTool("mindvault_rpc_health")).toBe(false);
       expect(serializesStateTool("mindvault_verify_install")).toBe(false);
       expect(serializesStateTool("mindvault_backup_state")).toBe(false);
     });

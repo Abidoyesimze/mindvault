@@ -40,6 +40,13 @@ export {
 } from "./validateNetwork.js";
 
 export {
+  Errors,
+  registryErrorName,
+  type RegistryErrorCode,
+  type RegistryErrorName,
+} from "./errors.js";
+
+export {
   REGISTRY_CLIENT_VERSION,
   getBindingMethodNames,
   fetchDeployedMethodNames,

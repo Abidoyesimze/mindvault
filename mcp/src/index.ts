@@ -1,16 +1,15 @@
-#!/usr/bin/env node
-/**
- * MindVault MCP Server
- * Exposes vault tools to AI agents via the Model Context Protocol.
- */
-
+import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   checkContractBindings,
   createRegistryClient,
   getAttestationHash,
   Errors as RegistryErrors,
   listResources,
+  type CatalogPage,
+  type IdPage,
   type Resource,
+  type ResourceState,
 } from "@mindvault/registry-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -83,8 +82,10 @@ import {
   createMockFetch,
   mockEnabledFromEnv,
   mockRegistryCount,
+  mockRegistryCreatorPage,
   mockRegistryLookup,
   mockRegistryList,
+  mockRegistryTagSearch,
   mockUpdateMetadata,
   mockSetPrice,
   mockTransferOwnership,
@@ -110,7 +111,13 @@ import { correlationHeaders } from "./correlation.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
 import {
+  assertToolTimeoutOverridesWithinDeadline,
+  resolveTransportTimeoutMax,
+} from "./toolTimeoutOverrides.js";
+import { decodeIdCursor, encodeIdCursor, type IdCursor } from "./registryIdCursor.js";
+import {
   flag,
+  optionalFlag,
   optionalInt,
   optionalString,
   requiredString,
@@ -157,6 +164,8 @@ import { safeErrorMessage, safeLog } from "./redaction.js";
 import {
   assertAutoPaymentWithinCeiling,
   assertTransactionFeeWithinCeiling,
+  assertChallengePriceWithinCeiling,
+  PriceChangedCeilingError,
 } from "./paymentCeiling.js";
 import {
   compareUsdc,
@@ -178,7 +187,6 @@ import {
 } from "./stateBackup.js";
 import { provenanceChain, recordResourceHistory, resourceChangeLog } from "./resourceHistory.js";
 import { logger } from "./logger.js";
-import { correlationHeaders } from "./correlation.js";
 import {
   buildSettlementSnapshot,
   estimateSettlementSteps,
@@ -265,7 +273,12 @@ import {
   type CatalogCacheContext,
 } from "./catalogCache.js";
 import { createCatalogCursor, resolveCatalogCursor } from "./catalogCursor.js";
-import { publishBatch, type BatchPublishItem } from "./tools/publish.js";
+import {
+  acceptTransfer,
+  cancelTransfer,
+  publishBatch,
+  type BatchPublishItem,
+} from "./tools/publish.js";
 import { buyLease, leaseStatus } from "./tools/leases.js";
 import {
   _setAgentWallet as _setAgentWalletRuntime,
@@ -714,6 +727,163 @@ async function registryHealth(): Promise<string> {
   return lines.join("\n");
 }
 
+// ── #1020: Profile-scoped RPC health checks ──────────────────────────────────
+
+interface RpcEndpointResult {
+  name: string;
+  url: string;
+  ok: boolean;
+  latencyMs: number | null;
+  networkId: string | null;
+  message: string;
+}
+
+/**
+ * Check the active profile's Horizon and Soroban RPC endpoints for reachability,
+ * latency, and reported network identity.
+ *
+ * Uses configured TIMEOUTS — never signs or submits transactions.
+ * Returns structured per-endpoint results with latency in milliseconds.
+ */
+async function rpcHealthOutcome(): Promise<ToolOutcome> {
+  const endpoints: RpcEndpointResult[] = [];
+
+  // Check Horizon (simple GET, expects JSON with network_passphrase)
+  const horizonStart = Date.now();
+  let horizonResult: RpcEndpointResult;
+  try {
+    const initWithUA: RequestInit = {
+      headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+    };
+    const res = await fetchWithTimeout(
+      httpFetch,
+      HORIZON_URL,
+      initWithUA,
+      "horizon",
+      TIMEOUTS.horizon,
+    );
+    const latencyMs = Date.now() - horizonStart;
+    if (res.ok) {
+      let networkId: string | null = null;
+      try {
+        const body = await res.json();
+        networkId =
+          (typeof body?.network_passphrase === "string" ? body.network_passphrase : null) ??
+          (typeof body?.network === "string" ? body.network : null);
+      } catch {
+        void 0;
+      }
+      horizonResult = {
+        name: "Horizon",
+        url: HORIZON_URL,
+        ok: true,
+        latencyMs,
+        networkId,
+        message: `Reachable (HTTP ${res.status}, ${latencyMs}ms)${networkId ? ` — network: ${networkId}` : ""}`,
+      };
+    } else {
+      horizonResult = {
+        name: "Horizon",
+        url: HORIZON_URL,
+        ok: false,
+        latencyMs,
+        message: `HTTP ${res.status} — check HORIZON_URL or Stellar testnet status`,
+        networkId: null,
+      };
+    }
+  } catch (err) {
+    horizonResult = {
+      name: "Horizon",
+      url: HORIZON_URL,
+      ok: false,
+      latencyMs: null,
+      networkId: null,
+      message: `Unreachable: ${safeErrorMessage(err)} — check HORIZON_URL or network connectivity`,
+    };
+  }
+  endpoints.push(horizonResult);
+
+  // Check Soroban RPC (POST getNetwork)
+  const sorobanStart = Date.now();
+  let sorobanResult: RpcEndpointResult;
+  try {
+    const initWithUA: RequestInit = {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": USER_AGENT },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getNetwork", params: {} }),
+    };
+    const res = await fetchWithTimeout(
+      httpFetch,
+      SOROBAN_RPC_URL,
+      initWithUA,
+      "soroban",
+      TIMEOUTS.soroban,
+    );
+    const latencyMs = Date.now() - sorobanStart;
+    if (res.ok) {
+      let networkId: string | null = null;
+      try {
+        const body = await res.json();
+        const result = body?.result;
+        networkId =
+          (typeof result?.networkPassphrase === "string" ? result.networkPassphrase : null) ??
+          (typeof result?.network === "string" ? result.network : null) ??
+          (typeof result?.friendbotUrl === "string" ? "has-friendbot" : null);
+      } catch {
+        void 0;
+      }
+      sorobanResult = {
+        name: "Soroban RPC",
+        url: SOROBAN_RPC_URL,
+        ok: true,
+        latencyMs,
+        networkId,
+        message: `Reachable (HTTP ${res.status}, ${latencyMs}ms)${networkId ? ` — network: ${networkId}` : ""}`,
+      };
+    } else {
+      sorobanResult = {
+        name: "Soroban RPC",
+        url: SOROBAN_RPC_URL,
+        ok: false,
+        latencyMs,
+        networkId: null,
+        message: `HTTP ${res.status} — check SOROBAN_RPC_URL or Stellar testnet status`,
+      };
+    }
+  } catch (err) {
+    sorobanResult = {
+      name: "Soroban RPC",
+      url: SOROBAN_RPC_URL,
+      ok: false,
+      latencyMs: null,
+      networkId: null,
+      message: `Unreachable: ${safeErrorMessage(err)} — check SOROBAN_RPC_URL or network connectivity`,
+    };
+  }
+  endpoints.push(sorobanResult);
+
+  const allOk = endpoints.every((e) => e.ok);
+
+  const summaryLines = endpoints.map((e) => {
+    const icon = e.ok ? "✓" : "✗";
+    return `${icon} ${e.name} (${e.url}): ${e.message}`;
+  });
+  const summary = allOk ? "All RPC endpoints healthy." : "One or more RPC endpoints are unhealthy.";
+  const text = [`Profile: ${activeProfileName}`, summary, "", ...summaryLines].join("\n");
+
+  return {
+    text,
+    structured: {
+      profile: activeProfileName,
+      horizonUrl: HORIZON_URL,
+      sorobanRpcUrl: SOROBAN_RPC_URL,
+      allOk,
+      endpoints,
+      summary,
+    },
+  };
+}
+
 // ── #882: Catalog cache pre-warm ─────────────────────────────────────────────
 // browseOutcome() already records a fresh snapshot into catalogCache.ts on
 // every successful call and falls back to the last snapshot on a transport
@@ -1026,11 +1196,38 @@ function requireApiKey(): string {
   return apiKey;
 }
 
-function makePaidFetch(wallet: AgentWallet) {
+function makePaidFetch(wallet: AgentWallet, baseFetch?: typeof fetch) {
   const signer = createEd25519Signer(wallet.secretKey, NETWORK);
   const scheme = new ExactStellarScheme(signer);
   const client = new x402Client().register(NETWORK, scheme);
-  return wrapFetchWithPayment(withTimeout(httpFetch, "payment", TIMEOUTS.payment), client);
+  const resolvedFetch = baseFetch ?? httpFetch;
+  return wrapFetchWithPayment(withTimeout(resolvedFetch, "payment", TIMEOUTS.payment), client);
+}
+
+/**
+ * Wrap httpFetch so that a 402 response with a price that differs from the
+ * preview price and exceeds the auto-pay ceiling throws PriceChangedCeilingError
+ * BEFORE the x402 client signs anything (#1025).
+ *
+ * The x402 client calls `fetch(url)`, gets 402, reads PAYMENT-REQUIRED, and
+ * immediately constructs and signs the payment. By intercepting the 402 here —
+ * before it ever reaches the x402 client — we can validate the actual charged
+ * price against the ceiling without needing a pre-sign hook in the x402 library.
+ *
+ * When the header is absent or unparseable the response passes through
+ * unmodified; the x402 client proceeds normally and the facilitator will reject
+ * a mis-signed entry if the price truly changed.
+ */
+function makeCeilingInterceptFetch(previewPrice: string, maxAutoPayUsdc?: string): typeof fetch {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const res = await httpFetch(input, init);
+    if (res.status === 402) {
+      const headerValue =
+        res.headers.get("PAYMENT-REQUIRED") ?? res.headers.get("payment-required");
+      assertChallengePriceWithinCeiling({ headerValue, previewPrice, maxAutoPayUsdc });
+    }
+    return res;
+  };
 }
 
 interface BalanceDetails {
@@ -2374,14 +2571,36 @@ async function publish(args: {
 
   const paidFetch = makePaidFetch(wallet);
 
-  const verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: `Title: ${args.title}\nDescription: ${args.description ?? ""}\nURL: ${args.externalUrl}`,
-      resourceId: resource.id,
-    }),
-  });
+  let verifyRes: Response;
+  try {
+    verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: `Title: ${args.title}\nDescription: ${args.description ?? ""}\nURL: ${args.externalUrl}`,
+        resourceId: resource.id,
+      }),
+    });
+  } catch (err) {
+    if (isTimeoutError(err)) {
+      try {
+        const snapshot = await publishStatus({ resourceId: resource.id });
+        return [
+          `Resource created (id: ${resource.id}) but verification timed out (ambiguous).`,
+          `The server may have committed the verification despite the lost response; no duplicate publish was attempted by the client.`,
+          `Resolved status (check before retrying):`,
+          snapshot,
+          `Retry only after confirming the verification status with mindvault_publish_status. Do not resubmit this publish blindly.`,
+        ].join("\n");
+      } catch {
+        return [
+          `Resource created (id: ${resource.id}) but verification timed out (ambiguous).`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying — do not blindly re-publish (it may already be verified/registered).`,
+        ].join("\n");
+      }
+    }
+    throw mcpError(mapTransportError({ operation: "Publish verification failed", source: "x402", error: err }));
+  }
   metrics.recordPayment(verifyRes.ok);
 
   const verifyData = await verifyRes.json().catch(() => null);
@@ -2407,10 +2626,32 @@ async function publish(args: {
       .join("\n");
   }
 
-  const registerRes = await jsonFetch(`${BASE_URL}/resources/${resource.id}/register`, {
-    method: "POST",
-    headers: { "x-api-key": apiKey },
-  });
+  let registerRes: ApiResponse<any>;
+  try {
+    registerRes = await jsonFetch(`${BASE_URL}/resources/${resource.id}/register`, {
+      method: "POST",
+      headers: { "x-api-key": apiKey },
+    });
+  } catch (err) {
+    if (isTimeoutError(err)) {
+      try {
+        const snapshot = await publishStatus({ resourceId: resource.id });
+        return [
+          `Resource created and verification attempted for "${resource.id}"; on-chain registration timed out (ambiguous).`,
+          `The server may have already registered it despite the lost response.`,
+          `Resolved status (check before retrying):`,
+          snapshot,
+          `Retry registration only after confirming status with mindvault_publish_status / mindvault_registry_lookup. Do not submit blindly.`,
+        ].join("\n");
+      } catch {
+        return [
+          `Resource created and verification attempted for "${resource.id}"; on-chain registration timed out (ambiguous).`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying registration — avoid duplicate registration.`,
+        ].join("\n");
+      }
+    }
+    throw mcpError(mapTransportError({ operation: "On-chain registration failed", source: "api", error: err }));
+  }
 
   const onchainStatus: string = registerRes.ok
     ? (registerRes.data.onchainStatus ?? "registered")
@@ -2541,12 +2782,21 @@ export async function buy(
     : null;
 
   const paidFetch = makePaidFetch(wallet);
+  const clientIdempotencyKey = `buy:${resourceId}:${randomUUID()}`;
   let res: Response;
   try {
     await onProgress?.(2, 4, "Submitting payment");
-    res = await paidFetch(`${BASE_URL}/resources/${resourceId}`);
+    res = await paidFetch(`${BASE_URL}/resources/${resourceId}`, {
+      headers: { "Idempotency-Key": clientIdempotencyKey },
+    });
   } catch (err) {
     metrics.recordPayment(false);
+    if (err instanceof PriceChangedCeilingError) {
+      // Price changed between preview and x402 challenge — the agent must
+      // re-authorize. Return a structured refusal (same shape as ceiling
+      // exceeded on preview) so the error is actionable without a stack trace.
+      return `Payment blocked: the server's price changed after the preview.\n` + err.message;
+    }
     throw mcpError(mapTransportError({ operation: "Buy failed", source: "x402", error: err }));
   }
   metrics.recordPayment(res.ok);
@@ -2579,6 +2829,7 @@ export async function buy(
       network: NETWORK,
       txHash,
       receiptRef: receipt?.paymentId != null ? String(receipt.paymentId) : null,
+      clientIdempotencyKey,
       ...(title ? { title } : {}),
     });
     recordResourceHistory({
@@ -3553,6 +3804,174 @@ export async function registryList(start: number, limit: number): Promise<string
   );
 }
 
+/**
+ * Compact summary of an on-chain resource, as the registry read tools return
+ * it. `state` is the contract's lifecycle state, so a caller can tell a
+ * delisted resource from a frozen one without a second lookup.
+ */
+function registryResourceSummary(resource: Resource) {
+  const priceUsdc = stroopsToUsdc(BigInt(resource.price as unknown as bigint));
+  return {
+    id: resource.id,
+    creator: resource.creator,
+    price: `${priceUsdc} USDC`,
+    metadata: resource.metadata,
+    listed: resource.listed,
+    state: resource.state.tag,
+    tags: resource.tags,
+  };
+}
+
+/**
+ * One page of a creator's on-chain resources, filtered by listing and
+ * lifecycle state (contract `list_by_creator_page_filtered`).
+ *
+ * The cursor is an opaque token: the contract's `IdCursor` is encoded and
+ * handed back untouched, so an agent cannot corrupt its own pagination.
+ */
+export async function registryCreatorPage(
+  creator: string,
+  cursorToken: string | undefined,
+  limit: number,
+  listed: boolean | undefined,
+  state: string | undefined,
+): Promise<string> {
+  if (_isMock())
+    return mockRegistryCreatorPage(
+      creator,
+      cursorToken,
+      limit,
+      listed,
+      state,
+      REGISTRY_CONTRACT_ID,
+      currentWallet()?.publicKey,
+    );
+
+  const decoded =
+    cursorToken === undefined
+      ? ({ ok: true, cursor: { tag: "Start", values: undefined } } as const)
+      : decodeIdCursor(cursorToken);
+  if (!decoded.ok) {
+    throw mcpError({
+      source: "soroban",
+      category: "validation",
+      summary: `Creator page rejected: ${decoded.error}`,
+      action:
+        "Call mindvault_registry_creator_page again without a cursor to start from the first page.",
+    });
+  }
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let page: IdPage;
+  try {
+    const tx = await client.list_by_creator_page_filtered({
+      creator,
+      cursor: decoded.cursor as IdCursor,
+      limit,
+      listed,
+      state:
+        state === undefined
+          ? undefined
+          : ({ tag: state, values: undefined } as unknown as ResourceState),
+    });
+    page = tx.result;
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `On-chain creator page failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL}, creator ${creator}, limit ${limit})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  const items = page.items.map(registryResourceSummary);
+  const nextCursor =
+    page.next_cursor.tag === "End" ? null : encodeIdCursor(page.next_cursor as IdCursor);
+
+  return JSON.stringify(
+    {
+      source: "on-chain",
+      creator,
+      count: items.length,
+      resources: items,
+      nextCursor,
+      message:
+        items.length === 0
+          ? `No on-chain resources matched for creator ${creator}. The filters may exclude everything the creator owns; try mindvault_registry_creator_page without a state or listed filter.`
+          : undefined,
+      contract: REGISTRY_CONTRACT_ID,
+      network: REGISTRY_NETWORK_PASSPHRASE,
+      rpc: SOROBAN_RPC_URL,
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Bounded search over the on-chain catalog for resources whose tag starts
+ * with a prefix (contract `search_by_tag_prefix`).
+ *
+ * The cursor is a catalog index, not a match count: it names the slot the
+ * scan resumes at, so a page that matched nothing still advances.
+ */
+export async function registryTagSearch(
+  prefix: string,
+  cursor: number,
+  limit: number,
+): Promise<string> {
+  if (_isMock()) return mockRegistryTagSearch(prefix, cursor, limit, REGISTRY_CONTRACT_ID);
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let page: CatalogPage;
+  try {
+    const tx = await client.search_by_tag_prefix({ prefix, cursor, limit });
+    page = tx.result;
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `On-chain tag search failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL}, prefix ${prefix}, cursor ${cursor}, limit ${limit})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  const items = page.items.map(registryResourceSummary);
+
+  return JSON.stringify(
+    {
+      source: "on-chain",
+      prefix,
+      cursor,
+      limit,
+      count: items.length,
+      resources: items,
+      nextCursor: page.next_cursor ?? null,
+      message:
+        items.length === 0
+          ? `No on-chain resources carry a tag starting with "${prefix}". The scan may have passed the matching entries; continue with nextCursor, or use mindvault_registry_list to see the whole catalog.`
+          : undefined,
+      contract: REGISTRY_CONTRACT_ID,
+      network: REGISTRY_NETWORK_PASSPHRASE,
+      rpc: SOROBAN_RPC_URL,
+    },
+    null,
+    2,
+  );
+}
+
 export async function registryCount(creator?: string): Promise<string> {
   if (_isMock()) return mockRegistryCount(creator, REGISTRY_CONTRACT_ID);
 
@@ -4284,7 +4703,7 @@ async function dispatchToolOutcome(
       case "mindvault_lease_status":
         return leaseStatus(requiredString(args, "resourceId"), optionalString(args, "holder"));
       case "mindvault_purchase_history":
-        return purchaseHistoryTool(rawRecord);
+        return purchaseHistoryTool(rawRecord, { profile: activeProfileName });
       case "mindvault_export_receipts":
         return exportReceiptsToolWithTimeout(
           rawRecord,
@@ -4335,6 +4754,20 @@ async function dispatchToolOutcome(
         );
       case "mindvault_registry_count":
         return registryCount(optionalString(args, "creator"));
+      case "mindvault_registry_creator_page":
+        return registryCreatorPage(
+          requiredString(args, "creator"),
+          optionalString(args, "cursor"),
+          optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
+          optionalFlag(args, "listed"),
+          optionalString(args, "state"),
+        );
+      case "mindvault_registry_tag_search":
+        return registryTagSearch(
+          requiredString(args, "prefix"),
+          optionalInt(args, "cursor", REGISTRY_LIST_DEFAULT_START),
+          optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
+        );
       case "mindvault_update_metadata":
         return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
       case "mindvault_set_price":
@@ -4377,6 +4810,8 @@ async function dispatchToolOutcome(
         return checkStatePermissionsTool();
       case "mindvault_registry_health":
         return registryHealth();
+      case "mindvault_rpc_health":
+        return rpcHealthOutcome();
       case "mindvault_prewarm_catalog":
         return prewarmCatalogCache();
       case "mindvault_client_config":

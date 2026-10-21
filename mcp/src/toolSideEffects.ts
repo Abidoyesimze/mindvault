@@ -113,6 +113,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_registry_lookup: READ,
   mindvault_registry_list: READ,
   mindvault_registry_count: READ,
+  mindvault_registry_creator_page: READ,
+  mindvault_registry_tag_search: READ,
   mindvault_pending_transfer: READ,
   mindvault_fee_config: READ,
   mindvault_tx_status: READ,
@@ -145,6 +147,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   // `reset: true` clears the in-process counters other calls report.
   mindvault_metrics: { local: "memory", remote: "none", payment: "none" },
   mindvault_registry_health: READ,
+  mindvault_rpc_health: READ,
   mindvault_client_config: READ,
   mindvault_mainnet_banner: READ,
   mindvault_verify_install: READ,
