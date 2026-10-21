@@ -173,6 +173,7 @@ import {
 } from "./stateBackup.js";
 import { provenanceChain, recordResourceHistory, resourceChangeLog } from "./resourceHistory.js";
 import { logger } from "./logger.js";
+import { correlationHeaders } from "./correlation.js";
 import {
   buildSettlementSnapshot,
   estimateSettlementSteps,
@@ -2142,6 +2143,8 @@ export async function preview(resourceId: string, bypassCache = false): Promise<
   const { r, label, cacheStatus } = await previewData(resourceId, bypassCache);
   // Publisher-supplied title/description are unbounded at the source, so cap
   // them before serializing rather than truncating the JSON afterwards (#582).
+  // Every advertised field is required (#1065): a value the API left out is
+  // reported as null rather than dropped by JSON.stringify.
   const out: Record<string, unknown> = applyPreviewLimits({
     id: r.id,
     title: r.title,
@@ -4113,7 +4116,10 @@ async function dispatchToolOutcome(
     name in TOOL_ARGUMENT_SPECS && !isDryRunCall ? validateToolArgs(name, rawArgs) : {};
   const dryRunArgs = isDryRunCall ? (rawRecord as ValidatedArgs) : args;
 
-  if (!(name === "mindvault_terms" && rawRecord.operation === "get")) {
+  // `mindvault_terms` is gated as the setter it can be; its `get` branch is a
+  // plain registry read and is exempt from both spend guardrails.
+  const isTermsRead = name === "mindvault_terms" && rawRecord.operation === "get";
+  if (!isTermsRead) {
     assertMainnetMutationAllowed(NETWORK, name, rawRecord);
   }
 
@@ -4121,12 +4127,14 @@ async function dispatchToolOutcome(
   // guardrail above (which only fires on pubnet) and from the auto-pay ceiling
   // in buy() (which only fires above an amount); a call may have to satisfy
   // all three. Off unless MINDVAULT_CONFIRM_PAID_OPERATIONS says otherwise.
-  assertPaidOperationConfirmed({
-    toolName: name,
-    args: rawRecord,
-    dryRun: isDryRunCall,
-    env: process.env,
-  });
+  if (!isTermsRead) {
+    assertPaidOperationConfirmed({
+      toolName: name,
+      args: rawRecord,
+      dryRun: isDryRunCall,
+      env: process.env,
+    });
+  }
 
   if (API_MUTATION_TOOLS.has(name) && !isDryRunCall) {
     await assertApiReachableFor(name);

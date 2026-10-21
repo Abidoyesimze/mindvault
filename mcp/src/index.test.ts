@@ -1397,6 +1397,10 @@ describe("dry-run – publish validation", () => {
     _setAgentWallet(testWallet);
     _setAgentApiKey("test-api-key");
     _setMockMode(true);
+    // A dry-run publish reads /agent/status and the wallet balance live
+    // (best-effort). Keep those reads offline so the suite never waits on the
+    // real API or Horizon; the dry run reports the failed read and proceeds.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch failed"));
   });
 
   afterEach(() => {
@@ -2963,7 +2967,12 @@ describe("API health preflight before mutation tools (#603)", () => {
       dryRun: true,
     });
     expect(JSON.parse(result).mode).toBe("dry-run");
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The dry run may read /agent/status and the balance live (#856), but it
+    // never runs the GET /resources reachability preflight.
+    const preflightCalls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => /\/resources(\?|$)/.test(url));
+    expect(preflightCalls).toEqual([]);
   });
 });
 

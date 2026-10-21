@@ -99,6 +99,11 @@ function emptyStore(): PurchaseHistoryFile {
   return { version: PURCHASE_HISTORY_VERSION, epoch: PURCHASE_HISTORY_EPOCH, purchases: [] };
 }
 
+/** `null`, a string, or absent — the stored forms of a nullable receipt field. */
+function isNullableString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === "string";
+}
+
 function isReceipt(value: unknown): value is PurchaseReceipt {
   if (!value || typeof value !== "object") return false;
   const r = value as Record<string, unknown>;
@@ -107,10 +112,20 @@ function isReceipt(value: unknown): value is PurchaseReceipt {
     typeof r.amount === "string" &&
     typeof r.network === "string" &&
     typeof r.timestamp === "string" &&
-    (r.txHash === null || typeof r.txHash === "string") &&
-    (r.receiptRef === null || typeof r.receiptRef === "string") &&
+    isNullableString(r.txHash) &&
+    isNullableString(r.receiptRef) &&
     (r.profile === undefined || typeof r.profile === "string")
   );
+}
+
+/**
+ * `txHash` and `receiptRef` are nullable, never optional, in the published
+ * schemas (#1065). A receipt written without one (hand-edited, or by an older
+ * build that serialized `undefined`) used to be dropped from the history
+ * entirely; it is kept, with the missing value read back as `null`.
+ */
+function normalizeStoredReceipt(r: PurchaseReceipt): PurchaseReceipt {
+  return { ...r, txHash: r.txHash ?? null, receiptRef: r.receiptRef ?? null };
 }
 
 /** Load the purchase store. Corrupted / missing files yield an empty history. */
@@ -127,8 +142,11 @@ export function loadPurchaseHistory(): PurchaseHistoryFile {
     if ((raw.epoch ?? "") !== PURCHASE_HISTORY_EPOCH) {
       return emptyStore();
     }
-    const purchases = raw.purchases.filter(isReceipt);
-    return { version: PURCHASE_HISTORY_VERSION, purchases };
+    const purchases = raw.purchases.filter(isReceipt).map(normalizeStoredReceipt);
+    // Keep the epoch: `recordPurchase` persists what this returns, and a store
+    // written back without it reads as a different epoch next time, which
+    // would discard every receipt recorded so far.
+    return { version: PURCHASE_HISTORY_VERSION, epoch: PURCHASE_HISTORY_EPOCH, purchases };
   } catch {
     return emptyStore();
   }

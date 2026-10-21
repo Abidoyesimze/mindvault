@@ -87,6 +87,15 @@ pub const MAX_RESOURCE_ID_LEN: u32 = 24;
 /// easy to find, document, and change in a single place instead of
 /// scattered `limit.min(20)` literals.
 pub const LIST_PAGE_CAP: u32 = 20;
+/// Maximum number of catalog index slots `export_page` reads per call. The
+/// cap bounds every export call's storage reads regardless of the `limit`
+/// asked for, so migration tooling cannot build a call that exceeds the
+/// ledger's read budget as the catalog grows.
+pub const EXPORT_PAGE_CAP: u32 = 20;
+/// Version of the [`ResourceExport`] view. Bumped only when a field is added,
+/// removed, or changes meaning, independently of `RESOURCE_SCHEMA_VERSION`:
+/// the export view is a stable projection, not the storage layout.
+pub const EXPORT_VIEW_VERSION: u32 = 1;
 pub const TOP_TAGS_CAP: u32 = 20;
 /// Maximum number of resources that can be registered in a single batch
 /// via `register_batch`. Keeps execution bounded and prevents transaction
@@ -189,6 +198,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("get", "—"),
     ("get_resource_state", "—"),
     ("get_resource_states", "—"),
+    ("export_page", "—"),
     ("get_many", "—"),
     ("exists", "—"),
     ("exists_many", "—"),
@@ -2490,6 +2500,67 @@ impl VaultRegistry {
         }
         let next_cursor = if i < total { Some(i) } else { None };
         CatalogPage { items, next_cursor }
+    }
+
+    /// Bounded, deterministic export of every resource for migration and
+    /// audit tooling, in catalog index order.
+    ///
+    /// - Each call reads at most `EXPORT_PAGE_CAP` index slots, starting at
+    ///   `cursor`. `limit` is clamped to `1..=EXPORT_PAGE_CAP`, so a `0` limit
+    ///   still makes progress instead of returning the same cursor forever.
+    /// - Every lifecycle state is exported, including `Delisted`, `Frozen`,
+    ///   `Disputed`, and `Tombstoned`: a migration must see the whole registry,
+    ///   not only what is for sale.
+    /// - Entries are read without the schema guard used by mutations, so a
+    ///   resource still on an older `schema_version` is exported (and can be
+    ///   found and migrated) rather than failing the page.
+    /// - The same storage always yields the same pages. `next_cursor` is the
+    ///   next index slot to read, or `None` at the end.
+    /// - Only the [`ResourceExport`] allowlist is returned; no private values.
+    /// - Read-only and available while the contract is paused.
+    pub fn export_page(env: Env, cursor: u32, limit: u32) -> ExportPage {
+        let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
+        let window = limit.clamp(1, EXPORT_PAGE_CAP);
+        let end = cursor.saturating_add(window).min(total);
+        let mut items: Vec<ResourceExport> = Vec::new(&env);
+        let mut i = cursor;
+        while i < end {
+            let idx_key = DataKey::Index(i);
+            if let Some(id) = env.storage().persistent().get::<DataKey, String>(&idx_key) {
+                Self::bump_persistent(&env, &idx_key);
+                let res_key = DataKey::Resource(id);
+                if let Some(resource) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Resource>(&res_key)
+                {
+                    Self::bump_persistent(&env, &res_key);
+                    items.push_back(ResourceExport {
+                        index: i,
+                        flagged: resource.dispute_flag.is_flagged(),
+                        id: resource.id,
+                        creator: resource.creator,
+                        state: resource.state,
+                        listed: resource.listed,
+                        price: resource.price,
+                        verified: resource.verified,
+                        frozen: resource.frozen,
+                        schema_version: resource.schema_version,
+                        version: resource.version,
+                        created_at: resource.created_at,
+                        updated_at: resource.updated_at,
+                    });
+                }
+            }
+            i += 1;
+        }
+        ExportPage {
+            export_version: EXPORT_VIEW_VERSION,
+            resource_schema_version: RESOURCE_SCHEMA_VERSION,
+            total,
+            items,
+            next_cursor: if i < total { Some(i) } else { None },
+        }
     }
 
     /// Paginated list of resources whose `listed` flag is true, in insertion order.

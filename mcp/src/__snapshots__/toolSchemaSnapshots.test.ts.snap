@@ -16,6 +16,10 @@ exports[`tool schema snapshots > mindvault_accept_transfer > input schema 1`] = 
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "resourceId": {
       "description": "The resource ID whose pending transfer to accept. Example: 'cm7x8y9z'",
       "examples": [
@@ -311,8 +315,8 @@ exports[`tool schema snapshots > mindvault_agent_status > output schema 1`] = `
 exports[`tool schema snapshots > mindvault_backup_state > annotations 1`] = `
 {
   "destructiveHint": false,
-  "idempotentHint": true,
-  "readOnlyHint": true,
+  "idempotentHint": false,
+  "readOnlyHint": false,
   "title": "Back Up State",
 }
 `;
@@ -1176,6 +1180,10 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > input schema 1`] = 
   "properties": {
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
       "type": "boolean",
     },
     "resourceId": {
@@ -3082,7 +3090,7 @@ exports[`tool schema snapshots > mindvault_import_profiles > output schema 1`] =
 
 exports[`tool schema snapshots > mindvault_import_wallet > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Import Wallet",
@@ -4993,7 +5001,7 @@ exports[`tool schema snapshots > mindvault_recover_catalog_cache > annotations 1
 {
   "destructiveHint": false,
   "idempotentHint": true,
-  "readOnlyHint": false,
+  "readOnlyHint": true,
   "title": "Recover Catalog Cache",
 }
 `;
@@ -5085,7 +5093,7 @@ exports[`tool schema snapshots > mindvault_recover_catalog_cache > output schema
 
 exports[`tool schema snapshots > mindvault_register > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Register Publisher",
@@ -5806,7 +5814,7 @@ exports[`tool schema snapshots > mindvault_registry_lookup > output schema 1`] =
 
 exports[`tool schema snapshots > mindvault_repair_sponsored_account > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": true,
   "readOnlyHint": false,
   "title": "Repair Sponsored Account",
@@ -5967,7 +5975,7 @@ exports[`tool schema snapshots > mindvault_restore_state > output schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_rotate_publisher_key > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Rotate Publisher Key",
@@ -7044,7 +7052,7 @@ exports[`tool schema snapshots > mindvault_set_tags > output schema 1`] = `null`
 
 exports[`tool schema snapshots > mindvault_setup_wallet > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Set Up Wallet",
@@ -7199,6 +7207,10 @@ exports[`tool schema snapshots > mindvault_terms > input schema 1`] = `
   "properties": {
     "confirmMainnet": {
       "description": "Required for set on mainnet (or set MINDVAULT_ALLOW_MAINNET=1).",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
       "type": "boolean",
     },
     "creator": {
