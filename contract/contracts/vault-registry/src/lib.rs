@@ -388,6 +388,11 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (48, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
     (49, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
     (50, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
+    (51, "InvalidMetadataPointers", "`set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`, or duplicate pointers, or an out-of-range `primary` index."),
+    (52, "AdminAlreadySet", "`bootstrap_dual_admin` was called after an admin was already set."),
+    (53, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
+    (54, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
+    (55, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -402,6 +407,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
 pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("register", "Resource"),
     ("regmemo", "memo_hash: BytesN<32>"),
+    ("nomemo", "(receipt_id: String, tx_hash: String)"),
+    ("setregt", "terms_hash: String"),
     (
         "setprice",
         "PriceUpdated { id, old_price, new_price, updater, revision }",
@@ -484,7 +491,6 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "txfrterms",
         "TransferWithTermsEvent { id, previous_owner, new_owner, terms_hash, attestation_reset }",
     ),
-    ("anchrxhst", "(resource_id: String, buyer: Address, attempts: AnchorAttempts)"),
     ("lease", "(resource_id: String, lease: Lease)"),
     ("leasesetl", "(resource_id: String, lease: Lease)"),
     ("leaserevk", "(resource_id: String, lease: Lease)"),
@@ -897,12 +903,6 @@ pub enum DataKey {
     RefundedAmount(String),
     /// Configured creator-refund window length, in ledgers.
     RefundWindow,
-    /// Ordered history of verification status changes for a verifier address.
-    VerifierHistory(Address),
-    /// Aggregated settled-payment earnings for a creator wallet address.
-    CreatorEarnings(Address),
-    /// Moderator who last set a resource's dispute flag or reason hash.
-    FlagModerator(String),
     /// Active lease held by `holder` on a resource.
     Lease(String, Address),
     /// Anchor attempt counter for `(resource_id, buyer)`.
@@ -978,27 +978,6 @@ pub enum DataKey {
     /// metadata or price change. Absent (read as `0`) until the first such
     /// mutation. Read by `get_revision`.
     Revision(String),
-    /// Registry-wide creator terms hash fallback, used by `get_terms_hash`
-    /// when a resource has no per-creator override.
-    RegistryTerms,
-    /// Creator-configured refund window in ledgers for payment receipts.
-    RefundWindow,
-    /// Ledger sequence after which a receipt is no longer refundable by its
-    /// creator. Written when the receipt is settled.
-    RefundDeadline(String),
-    /// Address entitled to receive a refund for a payment receipt.
-    PaymentRecipient(String),
-    /// A recorded refund for a payment receipt, keyed by `refund_id`.
-    RefundReceipt(String),
-    /// Cumulative refunded amount for a payment receipt id.
-    RefundedAmount(String),
-    /// Secondary index mapping a refund settlement tx hash to its `refund_id`.
-    RefundTxHash(String),
-    /// Rejected-attempt bookkeeping for a purchase-receipt anchor pair
-    /// `(resource_id, buyer)`.
-    AnchorAttempts(String, Address),
-    /// A time-limited access lease for `(resource_id, holder)`.
-    Lease(String, Address),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -1036,6 +1015,52 @@ pub struct MetadataUpdateEvent {
     pub new_metadata: String,
     /// Listing revision after this update (see `get_revision`).
     pub revision: u32,
+}
+
+/// One row of a bounded registry export (`export_page`).
+///
+/// A flattened projection of [`Resource`] for migration tooling: it carries
+/// only the fields an indexer needs to rebuild state elsewhere, and never
+/// the resource's metadata pointer.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResourceExport {
+    /// Catalog index (`DataKey::Index`) the resource was registered under.
+    /// Strictly increasing within and across pages.
+    pub index: u32,
+    pub id: String,
+    pub creator: Address,
+    pub state: ResourceState,
+    pub listed: bool,
+    /// Listed price in USDC base units.
+    pub price: i128,
+    pub verified: VerificationStatus,
+    pub frozen: bool,
+    /// `true` while a moderator dispute flag is active. The flag reason is
+    /// not exported.
+    pub flagged: bool,
+    /// `Resource` storage schema the entry was last written with. Entries
+    /// below `RESOURCE_SCHEMA_VERSION` still need `migrate_resource`.
+    pub schema_version: u32,
+    /// Monotonic write counter (`Resource.version`).
+    pub version: u32,
+    pub created_at: u32,
+    pub updated_at: u32,
+}
+
+/// One bounded page of `export_page`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExportPage {
+    /// [`EXPORT_VIEW_VERSION`] of the `items` layout.
+    pub export_version: u32,
+    /// `RESOURCE_SCHEMA_VERSION` of the contract that produced the page.
+    pub resource_schema_version: u32,
+    /// Total catalog index slots (`count`) when the page was read.
+    pub total: u32,
+    pub items: Vec<ResourceExport>,
+    /// Catalog index to pass back as `cursor`; `None` once the end is reached.
+    pub next_cursor: Option<u32>,
 }
 
 /// Structured payload published with the `setprice` event.
@@ -1249,8 +1274,6 @@ impl AnchorFailureReason {
                 Error::InvalidPaymentTransition
             }
             AnchorFailureReason::VerifierUnavailable => Error::AdminNotSet,
-            AnchorFailureReason::NoPaymentRecorded => Error::NotFound,
-            AnchorFailureReason::ReceiptHashMismatch => Error::InvalidTxHash,
         }
     }
 }
@@ -1409,6 +1432,18 @@ pub enum Error {
     /// soon after `nominate_new_admin` (before `ADMIN_NOMINATION_MIN_GAP`
     /// ledgers have elapsed).
     AdminNominationExpired = 50,
+    /// `set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`,
+    /// or duplicate pointers, or a `primary` index out of range.
+    InvalidMetadataPointers = 51,
+    /// `bootstrap_dual_admin` was called after an admin was already set.
+    AdminAlreadySet = 52,
+    /// `recover_admin` was called but no recovery admin is configured.
+    RecoveryAdminNotSet = 53,
+    /// A resource was written by a schema version this contract cannot migrate.
+    UnsupportedResourceSchema = 54,
+    /// A listing revision increment would exceed `u32::MAX`. The mutation is
+    /// rejected without changing resource state.
+    RevisionOverflow = 55,
 }
 
 #[contract]
@@ -1734,6 +1769,7 @@ impl VaultRegistry {
         }
 
         for (id, mut resource, metadata) in pending {
+            let revision = Self::bump_listing_revision(&env, &id)?;
             let old_metadata = resource.metadata.clone();
             resource.metadata = metadata.clone();
             Self::save(&env, &mut resource);
@@ -1746,6 +1782,7 @@ impl VaultRegistry {
                     id,
                     old_metadata,
                     new_metadata: metadata,
+                    revision,
                 },
             );
         }
@@ -4788,7 +4825,6 @@ impl VaultRegistry {
         }
         Self::validate_resource_id(&id)?;
         let mut resource = Self::load(&env, &id)?;
-        let was_flagged = resource.dispute_flag.is_flagged();
         resource.dispute_flag = DisputeFlag::Flagged(reason);
         Self::save(&env, &mut resource);
         Self::record_flag_moderator(&env, &id, &moderator);
@@ -6645,12 +6681,7 @@ impl VaultRegistry {
         env.storage().instance().set(&DataKey::Count, &next_count);
         Self::bump_instance(&env);
 
-        let mut list = Self::creator_list(&env, &creator);
-        list.push_back(id.clone());
-        env.storage()
-            .persistent()
-            .set(&Self::creator_key(&env, &creator), &list);
-        Self::bump_persistent(&env, &Self::creator_key(&env, &creator));
+        Self::append_to_creator_index(&env, &creator, id.clone());
 
         Self::set_creator_count(&env, &creator, next_creator_count);
 
