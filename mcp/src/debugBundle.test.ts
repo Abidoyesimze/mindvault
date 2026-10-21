@@ -200,7 +200,11 @@ describe("collectAuditTail", () => {
     const result = collectAuditTail({ MINDVAULT_AUDIT_LOG_FILE: file }, 5);
     expect(result.truncated).toBe(true);
     expect(result.entries.map((entry) => entry.toolName)).toEqual([
-      "recent-1", "recent-2", "recent-3", "recent-4", "recent-5",
+      "recent-1",
+      "recent-2",
+      "recent-3",
+      "recent-4",
+      "recent-5",
     ]);
     expect(JSON.stringify(result)).not.toContain("x".repeat(100));
   });

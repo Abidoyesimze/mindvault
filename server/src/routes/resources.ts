@@ -370,7 +370,6 @@ router.post(
     const publisher = req.publisher!;
     const resourceId = req.params.id as string;
 
-  try {
     const resource = await getResourceById(resourceId);
     if (!resource) {
       res.status(404).json({ error: "Resource not found" });
@@ -417,13 +416,6 @@ router.post(
     const { TransactionBuilder, Networks } = await import("@stellar/stellar-sdk");
     const { Keypair } = await import("@stellar/stellar-sdk");
     // For now, use the registry client approach
-    const result = await submitSignedTx(signedXdr);
-
-    await db
-      .update(resources)
-      .set({ onchainStatus: "pending" })
-      .where(eq(resources.id, resourceId));
-
     try {
       if (signedXdr) {
         // New flow: submit signed XDR

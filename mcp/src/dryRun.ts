@@ -305,7 +305,8 @@ export function dryRunPublish(
       estimatedNetworkFeeXlm: null,
       resourcePrice: input.price ?? null,
       protocolFeeUsdc: estimatedVerificationFee,
-      estimatedTotalUsdc: estimatedVerificationFee.replace(/[^0-9.]/g, "") || estimatedVerificationFee,
+      estimatedTotalUsdc:
+        estimatedVerificationFee.replace(/[^0-9.]/g, "") || estimatedVerificationFee,
       costSummaryKind: "estimate",
       respectsPaymentCeiling: true,
       requiredWalletState: {

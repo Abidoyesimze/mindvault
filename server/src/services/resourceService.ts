@@ -491,11 +491,12 @@ export async function getVerificationDetails(resourceId: string) {
   };
 }
 
-
-export async function listCatalogPaginated(params: {
-  limit?: number;
-  offset?: number;
-} = {}) {
+export async function listCatalogPaginated(
+  params: {
+    limit?: number;
+    offset?: number;
+  } = {},
+) {
   const limit = params.limit ?? 20;
   const offset = params.offset ?? 0;
   return db

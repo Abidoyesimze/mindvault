@@ -5,7 +5,10 @@ import path from "node:path";
 export function writeFileAtomicSync(targetPath: string, data: string | Buffer) {
   const dir = path.dirname(targetPath);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const tmp = path.join(dir, `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const tmp = path.join(
+    dir,
+    `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   try {
     const fd = fs.openSync(tmp, "w", 0o600);
     try {
