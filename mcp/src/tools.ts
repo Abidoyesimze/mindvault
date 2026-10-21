@@ -136,7 +136,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Set Up Wallet",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -180,7 +180,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Repair Sponsored Account",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
     },
   },
@@ -367,7 +367,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Register Publisher",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -714,6 +714,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           type: "boolean",
           description: "Required for set on mainnet (or set MINDVAULT_ALLOW_MAINNET=1).",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["operation"],
     },
@@ -978,9 +979,9 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
     annotations: {
       title: "Back Up State",
-      readOnlyHint: true,
+      readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
+      idempotentHint: false,
     },
   },
   {
@@ -1262,6 +1263,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -1290,6 +1292,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -1556,7 +1559,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Import Wallet",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -1584,7 +1587,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Rotate Publisher Key",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -1634,12 +1637,12 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_recover_catalog_cache",
     description:
-      "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
+      "Catalog stale-cache recovery guidance: explains how to refresh catalog index data when browse results appear stale. Read-only; it does not invalidate or re-fetch anything itself.",
     inputSchema: { type: "object", properties: {}, required: [] },
     outputSchema: RECOVER_CACHE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Recover Catalog Cache",
-      readOnlyHint: false,
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },

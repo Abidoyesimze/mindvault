@@ -348,6 +348,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     creator: STELLAR_ADDRESS,
     termsHash: { kind: "string", maxLength: 64 },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_network_profile: {},
   mindvault_check_bindings: {},
@@ -419,10 +420,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_accept_transfer: {
     resourceId: RESOURCE_ID,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_cancel_transfer: {
     resourceId: RESOURCE_ID,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_pending_transfer: {
     resourceId: RESOURCE_ID,

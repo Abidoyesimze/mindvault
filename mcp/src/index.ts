@@ -3986,7 +3986,10 @@ async function dispatchToolOutcome(
     name in TOOL_ARGUMENT_SPECS && !isDryRunCall ? validateToolArgs(name, rawArgs) : {};
   const dryRunArgs = isDryRunCall ? (rawRecord as ValidatedArgs) : args;
 
-  if (!(name === "mindvault_terms" && rawRecord.operation === "get")) {
+  // `mindvault_terms` is gated as the setter it can be; its `get` branch is a
+  // plain registry read and is exempt from both spend guardrails.
+  const isTermsRead = name === "mindvault_terms" && rawRecord.operation === "get";
+  if (!isTermsRead) {
     assertMainnetMutationAllowed(NETWORK, name, rawRecord);
   }
 
@@ -3994,12 +3997,14 @@ async function dispatchToolOutcome(
   // guardrail above (which only fires on pubnet) and from the auto-pay ceiling
   // in buy() (which only fires above an amount); a call may have to satisfy
   // all three. Off unless MINDVAULT_CONFIRM_PAID_OPERATIONS says otherwise.
-  assertPaidOperationConfirmed({
-    toolName: name,
-    args: rawRecord,
-    dryRun: isDryRunCall,
-    env: process.env,
-  });
+  if (!isTermsRead) {
+    assertPaidOperationConfirmed({
+      toolName: name,
+      args: rawRecord,
+      dryRun: isDryRunCall,
+      env: process.env,
+    });
+  }
 
   if (API_MUTATION_TOOLS.has(name) && !isDryRunCall) {
     await assertApiReachableFor(name);
