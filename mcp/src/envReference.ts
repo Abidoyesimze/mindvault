@@ -275,6 +275,13 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     source: "mcp/src/toolTimeoutOverrides.ts",
   },
   {
+    name: "MINDVAULT_TRANSPORT_TIMEOUT_MAX_MS",
+    description:
+      "Maximum allowed value for any per-tool timeout override. Overrides exceeding this effective request deadline fail at startup. 0 disables the cap.",
+    default: "300000",
+    source: "mcp/src/toolTimeoutOverrides.ts",
+  },
+  {
     name: "MINDVAULT_TOOL_DURATION_BUDGET_MS",
     description:
       "Duration budget a tool call should finish within; exceeded calls are counted by the metrics recorder.",

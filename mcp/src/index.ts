@@ -337,7 +337,9 @@ const httpFetch: typeof fetch = MOCK
   : withProxy((input, init) => fetch(input as RequestInfo | URL, init), PROXY_CONFIG);
 
 const TIMEOUTS = resolveTimeouts(process.env);
-const TOOL_TIMEOUTS = resolveToolTimeouts(process.env).overrides;
+const toolTimeoutsResult = resolveToolTimeouts(process.env);
+const TOOL_TIMEOUTS = toolTimeoutsResult.overrides;
+assertToolTimeoutOverridesWithinDeadline(TOOL_TIMEOUTS, resolveTransportTimeoutMax(process.env));
 
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
 
