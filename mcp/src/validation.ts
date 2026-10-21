@@ -36,7 +36,7 @@ import {
 } from "./outboundUrl.js";
 import { CATALOG_MAX_LIMIT, CATALOG_SORT_VALUES } from "./catalogFilters.js";
 import { REGISTRY_LIST_MAX_LIMIT } from "./registryPagination.js";
-import { RECEIPT_EXPORT_MAX_LIMIT } from "./receipts.js";
+import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_ROW_FIELDS } from "./receipts.js";
 import { DEBUG_BUNDLE_MAX_AUDIT_LINES } from "./debugBundleSchema.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import {
@@ -346,6 +346,13 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     since: { kind: "string", maxLength: 64 },
     until: { kind: "string", maxLength: 64 },
     limit: { kind: "integer", min: 1, max: RECEIPT_EXPORT_MAX_LIMIT },
+    offset: { kind: "integer", min: 0 },
+    fields: {
+      kind: "string_array",
+      pattern: new RegExp(`^(${RECEIPT_ROW_FIELDS.join("|")})$`),
+      patternHint: `a known receipt field (${RECEIPT_ROW_FIELDS.join(", ")})`,
+    },
+    includeSensitive: { kind: "flag" },
     groupBy: { kind: "enum", values: ["month"] },
   },
   mindvault_register_onchain: {
