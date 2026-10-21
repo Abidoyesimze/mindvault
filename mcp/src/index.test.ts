@@ -997,7 +997,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
         // Horizon balance: enough USDC
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1035,7 +1042,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
         // Horizon: insufficient balance
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "1.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "1.00",
+              },
+            ],
           }),
         );
       }
@@ -1062,7 +1076,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "999.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "999.00",
+              },
+            ],
           }),
         );
       }
@@ -1084,6 +1105,67 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
   it("throws when no wallet is configured", async () => {
     _setAgentWallet(null);
     await expect(buy("res-001")).rejects.toThrow("No wallet");
+  });
+
+  it("rejects counterfeit USDC: reports no-trustline when only a fake USDC is present (#1053)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        // A counterfeit "USDC" with a different issuer — should NOT be selected.
+        return Promise.resolve(
+          mockResponse({
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE",
+                balance: "5000.0000000",
+              },
+              { asset_type: "native", balance: "100.0000000" },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse({ id: "res-001", title: "Doc", price: "5.00" }));
+    });
+
+    const result = await walletInfo();
+    // The counterfeit should be invisible — no-trustline status, zero USDC.
+    expect(result).toContain("USDC Balance: 0");
+    expect(result).toContain("no-trustline");
+  });
+
+  it("selects only canonical USDC when both real and counterfeit are present (#1053)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        return Promise.resolve(
+          mockResponse({
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE",
+                balance: "5000.0000000",
+              },
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "42.0000000",
+              },
+              { asset_type: "native", balance: "100.0000000" },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse({ id: "res-001", title: "Doc", price: "5.00" }));
+    });
+
+    const result = await walletInfo();
+    // Only the canonical (42.0000000) should be reported, not the counterfeit (5000).
+    expect(result).toContain("USDC Balance: 42.0000000");
+    expect(result).not.toContain("USDC Balance: 5000.0000000");
   });
 });
 
@@ -1111,7 +1193,14 @@ describe("buy – output shape for agent consumption", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1175,7 +1264,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1218,7 +1314,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1256,7 +1359,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1844,7 +1954,12 @@ describe("repairSponsoredAccount", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "2.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "0.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "0.0000000",
+          },
         ],
       }),
     );
@@ -1956,7 +2071,12 @@ describe("multi-wallet profiles", () => {
           subentry_count: 2,
           balances: [
             { asset_type: "native", balance: "100.0000000" },
-            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "12.5" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+              balance: "12.5",
+            },
           ],
         }),
       ),
@@ -2019,7 +2139,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "5.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "0.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "0.0000000",
+          },
         ],
       }),
     );
@@ -2039,7 +2164,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "50.1234567" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "99.9999999" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "99.9999999",
+          },
         ],
       }),
     );
@@ -2059,7 +2189,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 5, // 5 trustlines/offers/signers
         balances: [
           { asset_type: "native", balance: "20.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "10.0" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "10.0",
+          },
         ],
       }),
     );
@@ -2075,7 +2210,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "1.0000000" }, // exactly the reserve
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "5.0" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "5.0",
+          },
         ],
       }),
     );
@@ -2906,7 +3046,12 @@ describe("setupWallet – half-completed sponsored creation", () => {
           subentry_count: 1,
           balances: [
             { asset_type: "native", balance: "10.0000000" },
-            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "25.0" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+              balance: "25.0",
+            },
           ],
         }),
       ),

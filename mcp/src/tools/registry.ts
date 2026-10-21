@@ -12,6 +12,7 @@ import {
   _isMock,
   jsonFetch,
   NETWORK,
+  networkPreset,
   REGISTRY_CONTRACT_ID,
   REGISTRY_NETWORK_PASSPHRASE,
   SOROBAN_RPC_URL,
@@ -29,6 +30,7 @@ import { mainnetAllowedFromEnv, formatMainnetDiagnostics } from "../mainnetGuard
 import { mockRegistryCount, mockRegistryList, mockRegistryLookup } from "../mock.js";
 import { type AgentWallet } from "../profiles.js";
 import { stroopsToUsdc } from "../usdcAmount.js";
+import { findCanonicalUsdc } from "../usdcIdentity.js";
 
 export interface BalanceDetails {
   status: "missing" | "no-trustline" | "zero" | "funded";
@@ -95,9 +97,7 @@ export async function getBalanceDetails(publicKey: string): Promise<BalanceDetai
   const reserve = baseReserve + subentryCount * entryReserve;
   const available = Math.max(0, parseFloat(xlm) - reserve);
 
-  const usdcBalance = balances.find(
-    (b: any) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC",
-  );
+  const usdcBalance = findCanonicalUsdc(balances, networkPreset.usdcClassicIssuer);
 
   if (!usdcBalance) {
     return {
@@ -159,7 +159,7 @@ export async function getAccountBalances(
   if (!res.ok) return { usdc: "0", native: "0", funded: false };
   const data: any = await res.json();
   const balances: any[] = data.balances ?? [];
-  const usdc = balances.find((b) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC");
+  const usdc = findCanonicalUsdc(balances, networkPreset.usdcClassicIssuer);
   const native = balances.find((b) => b.asset_type === "native");
   return { usdc: usdc?.balance ?? "0", native: native?.balance ?? "0", funded: true };
 }
