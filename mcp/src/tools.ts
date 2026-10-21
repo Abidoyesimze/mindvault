@@ -22,6 +22,7 @@ import {
   BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA,
   CATALOG_LIST_OUTPUT_SCHEMA,
   CONSISTENCY_OUTPUT_SCHEMA,
+  METADATA_DIFF_OUTPUT_SCHEMA,
   FEE_CONFIG_OUTPUT_SCHEMA,
   LIST_PROFILES_OUTPUT_SCHEMA,
   METADATA_HASH_PREVIEW_OUTPUT_SCHEMA,
@@ -47,13 +48,18 @@ import {
   REGISTRY_LIST_OUTPUT_SCHEMA,
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
+  SERVER_ENDPOINTS_OUTPUT_SCHEMA,
   TX_STATUS_OUTPUT_SCHEMA,
   USE_PROFILE_OUTPUT_SCHEMA,
   WALLET_BALANCES_OUTPUT_SCHEMA,
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
-import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
+import {
+  RECEIPT_EXPORT_MAX_LIMIT,
+  RECEIPT_EXPORT_OUTPUT_SCHEMA,
+  RECEIPT_ROW_FIELDS,
+} from "./receipts.js";
 import {
   DEBUG_BUNDLE_DEFAULT_AUDIT_LINES,
   DEBUG_BUNDLE_MAX_AUDIT_LINES,
@@ -136,7 +142,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Set Up Wallet",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -148,6 +154,23 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: WALLET_INFO_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Wallet Info",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_wallet_balances",
+    description:
+      "Balances for every configured agent wallet (each profile with a wallet) plus the platform wallet, from PLATFORM_WALLET_ADDRESS when set. Read-only. Reports XLM total/available/reserve and USDC balance/status per wallet over Horizon, plus totals across unique wallets. A wallet that fails to load is reported with a note rather than failing the whole call.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+    outputSchema: WALLET_BALANCES_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Wallet Balances",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -180,7 +203,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Repair Sponsored Account",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
     },
   },
@@ -294,7 +317,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_search",
     description:
-      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries.",
+      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; cursors are bound to the active profile and exact filter set. Set bypassCache=true for a fresh per-call read.",
     inputSchema: {
       type: "object",
       properties: { ...catalogFilterInputProperties },
@@ -367,7 +390,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Register Publisher",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -613,6 +636,27 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description: `Max receipts to export, newest first (1–${RECEIPT_EXPORT_MAX_LIMIT}).`,
           examples: [50, 100],
         },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Rows to skip from the newest receipt, for resumable paging. The envelope's nextOffset is the value to pass here on the next call.",
+          examples: [0, 500],
+        },
+        fields: {
+          type: "string",
+          description:
+            "Comma-separated subset of row fields to include, in order. Defaults to every field except sensitive ones. Known fields: " +
+            RECEIPT_ROW_FIELDS.join(", ") +
+            ". Selecting a sensitive field (profile) is an explicit opt-in.",
+          examples: ["resourceId,amount,purchasedAt", "resourceId,txHash,explorerUrl"],
+        },
+        includeSensitive: {
+          type: "boolean",
+          description:
+            "When true, keep sensitive fields (profile) in the default field set. Has no effect when fields is given.",
+          examples: [false, true],
+        },
         groupBy: {
           type: "string",
           enum: ["month"],
@@ -643,6 +687,11 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "The resource ID to register on-chain (from mindvault_publish output). Must be verified and not already registered. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
+        },
+        bypassCache: {
+          type: "boolean",
+          description:
+            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
         confirmMainnet: {
           type: "boolean",
@@ -714,6 +763,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           type: "boolean",
           description: "Required for set on mainnet (or set MINDVAULT_ALLOW_MAINNET=1).",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["operation"],
     },
@@ -775,6 +825,30 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: CONSISTENCY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Check Consistency",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_metadata_diff",
+    description:
+      "Compare off-chain resource metadata from the API catalog with the on-chain vault-registry record and report field-level discrepancies. Each compared field (price, metadata pointer, listing status, creator, tags) is reported as match, mismatch, missing_api, or missing_onchain. The response always identifies the comparison sources (API base URL, contract ID) and network so operators know exactly which pair of records they are comparing. Useful for detecting drift after manual edits, failed on-chain sync, or partial publishes. Read-only — does not modify any state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource ID to compare between the API catalog and the on-chain vault-registry.",
+          examples: ["swcn98besxpp6t1u8e77fqz3"],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: METADATA_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Metadata Diff",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -978,9 +1052,9 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
     annotations: {
       title: "Back Up State",
-      readOnlyHint: true,
+      readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
+      idempotentHint: false,
     },
   },
   {
@@ -1067,6 +1141,23 @@ const DEFINED_TOOLS: ToolDefinition[] = [
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_server_endpoints",
+    description:
+      "Introspect this MindVault deployment's HTTP API from its published OpenAPI spec (MINDVAULT_URL/openapi.json). Read-only. Returns the discovered endpoints (method, path, operationId, tags, summary), the unique paths, and the spec's title/version, so an agent can learn what the server exposes without guessing URLs.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+    outputSchema: SERVER_ENDPOINTS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Server Endpoints",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -1262,6 +1353,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -1290,6 +1382,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -1523,7 +1616,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_import_wallet",
     description:
-      "Import an existing Stellar wallet by providing a secret key (or reading MINDVAULT_AGENT_SECRET from the environment). Validates the key, optionally persists it to the active profile (or a named profile), and never logs the secret. Use this to restore a wallet from backup or connect to an existing identity.",
+      "Import an existing Stellar wallet by providing a secret key (or reading MINDVAULT_AGENT_SECRET from the environment). Two-step: the first call (without confirm) derives the public address and displays it with the target profile and network binding, but writes nothing. Pass confirm: true to save. The secret key is never returned in any response. Use this to restore a wallet from backup or connect to an existing identity.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1538,11 +1631,11 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description: "Optional profile name to import into. Defaults to the active profile.",
           examples: ["testnet", "mainnet-publisher"],
         },
-        persist: {
+        confirm: {
           type: "boolean",
           description:
-            "When true (default), save the imported wallet to the state file. When false, validate only and return the public key without writing to disk.",
-          examples: [true, false],
+            "Must be true to persist the wallet. Without it the tool derives and displays the address but writes nothing, so the agent can verify the address before committing.",
+          examples: [true],
         },
         confirmMainnet: {
           type: "boolean",
@@ -1556,7 +1649,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Import Wallet",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -1584,7 +1677,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Rotate Publisher Key",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -1634,12 +1727,12 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_recover_catalog_cache",
     description:
-      "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
+      "Catalog stale-cache recovery guidance: explains how to refresh catalog index data when browse results appear stale. Read-only; it does not invalidate or re-fetch anything itself.",
     inputSchema: { type: "object", properties: {}, required: [] },
     outputSchema: RECOVER_CACHE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Recover Catalog Cache",
-      readOnlyHint: false,
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },
@@ -1784,6 +1877,75 @@ const DEFINED_TOOLS: ToolDefinition[] = [
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_onchain_preflight",
+    description:
+      "Check the configured vault-registry contract ID, Stellar network, x402 network, and supported resource schema versions before enabling on-chain MCP tools. Purely local and read-only — no network calls — and returns an actionable remediation per mismatch. Publish/register setup flows run the same checks and fail fast on a malformed contract ID or unrecognized STELLAR_NETWORK.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        requestedSchemaVersion: {
+          type: "integer",
+          description:
+            "Resource schema version the caller intends to use. Omit to only report the supported set without a verdict.",
+          examples: [7, 6],
+        },
+      },
+      required: [],
+    },
+    outputSchema: ONCHAIN_PREFLIGHT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "On-chain Preflight",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_migration_preview",
+    description:
+      "Preview a state-schema migration before it is applied to saved wallet profiles: which stored fields will change (redacted), which state schema version the migration targets, whether a pre-migration backup snapshot will be created, and how the prior state is restored if applying the write fails. Read-only — it never writes, moves, or quarantines anything.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: MIGRATION_PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Migration Preview",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_support_bundle",
+    description:
+      "Export a redacted support bundle scoped to a single incident for a support ticket: the audit-log entries and request traces carrying the incident's correlation ID, the metrics snapshot, and a profile summary (public keys only). Wallet secrets, API keys, and unrelated user data never enter the bundle; public keys and contract ids are kept so network mismatches stay visible. Local and read-only, no network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        incidentId: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Correlation ID (mv-…) of the failing tool call, from the audit log or the agent's transcript. The bundle includes only entries matching this id; a blank value is rejected.",
+          examples: ["mv-01hq7x9k2m4p6r8t0v2w4y6a8c"],
+        },
+        auditLines: {
+          type: "integer",
+          minimum: 0,
+          maximum: SUPPORT_BUNDLE_MAX_AUDIT_LINES,
+          description: `Matched audit-log entries to include from the end of MINDVAULT_AUDIT_LOG_FILE (0–${SUPPORT_BUNDLE_MAX_AUDIT_LINES}, default ${SUPPORT_BUNDLE_DEFAULT_AUDIT_LINES}). 0 omits the section.`,
+          examples: [50, 200],
+        },
+      },
+      required: ["incidentId"],
+    },
+    outputSchema: SUPPORT_BUNDLE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Export Support Bundle",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
 ];

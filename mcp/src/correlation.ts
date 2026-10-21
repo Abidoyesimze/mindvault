@@ -203,6 +203,27 @@ export function currentCorrelationId(): string | undefined {
   return correlationStorage.getStore();
 }
 
+/**
+ * Header carrying the correlation id. Matches the server's `x-request-id`.
+ * Kept consistent with `CORRELATION_META_KEY`'s suffix so a request id and a
+ * result meta id can be joined in server logs.
+ */
+export const CORRELATION_HEADER = "x-request-id";
+
+/**
+ * A header bag carrying the ambient correlation id.
+ *
+ * The extra headers are passed through and the id is applied last, so it
+ * cannot be shadowed by a caller-supplied value (for example one the x402
+ * wrapper set). Outside a tool call there is no ambient id, so the extra
+ * headers return unchanged — on the wire that is the same as the `undefined`
+ * id this used to put in the bag, because fetch skips undefined header values.
+ */
+export function correlationHeaders(extra?: Record<string, string>): Record<string, string> {
+  const id = currentCorrelationId();
+  return id === undefined ? { ...extra } : { ...extra, [CORRELATION_HEADER]: id };
+}
+
 /** Shape of an MCP tool result, narrowed to what this module touches. */
 export interface ResultWithMeta {
   _meta?: Record<string, unknown>;
@@ -231,6 +252,21 @@ export function attachCorrelationId<T extends ResultWithMeta>(
 export function correlationIdOf(result: ResultWithMeta | null | undefined): string | undefined {
   const value = result?._meta?.[CORRELATION_META_KEY];
   return typeof value === "string" ? value : undefined;
+}
+
+/** Outbound HTTP header carrying the in-flight call's ID to MindVault services. */
+export const CORRELATION_HEADER = "x-request-id";
+
+/**
+ * Headers for an outbound request made during a tool call: `extra` plus
+ * {@link CORRELATION_HEADER} when a call is in flight, so a server-side log
+ * line can be matched to the tool call that caused it. Outside a call the
+ * header is omitted rather than invented, for the same reason
+ * {@link currentCorrelationId} returns `undefined`.
+ */
+export function correlationHeaders(extra?: Record<string, string>): Record<string, string> {
+  const id = currentCorrelationId();
+  return id ? { ...extra, [CORRELATION_HEADER]: id } : { ...extra };
 }
 
 /**

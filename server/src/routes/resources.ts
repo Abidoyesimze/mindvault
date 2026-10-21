@@ -47,6 +47,25 @@ import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
 
 const router: RouterType = Router();
 
+const DEFAULT_PAGE_LIMIT = 20;
+const MAX_PAGE_LIMIT = 100;
+
+function decodeCursor(cursor?: string): number | null {
+  if (!cursor) return null;
+  try {
+    const raw = Buffer.from(cursor, "base64url").toString("utf8");
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) throw new Error("bad");
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function encodeCursor(offset: number): string {
+  return Buffer.from(String(offset), "utf8").toString("base64url");
+}
+
 // POST /resources — publish a resource (authenticated)
 router.post(
   "/resources",
@@ -187,6 +206,23 @@ router.get("/resources", async (req, res) => {
       accessUrl: `${config.BASE_URL}/resources/${r.id}`,
     })),
   );
+  const offset = decodeCursor(cursor);
+  if (cursor && offset === null) {
+    res.status(400).json({ error: "invalid_cursor" });
+    return;
+  }
+  const start = offset ?? 0;
+  const catalog = await listCatalog({ limit, offset: start });
+  const items = catalog.map((r) => ({
+    ...r,
+    accessUrl: `${config.BASE_URL}/resources/${r.id}`,
+  }));
+  const nextOffset = start + items.length;
+  res.json({
+    items,
+    nextCursor: items.length === limit ? encodeCursor(nextOffset) : null,
+    count: items.length,
+  });
 });
 
 // GET /resources/:id/meta — resource preview (public)
@@ -314,53 +350,13 @@ router.get("/resources/:id/register/prepare", apiKeyAuth, async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
-  const resource = await getResourceById(resourceId);
+  const resource = await delistResource(resourceId, publisher.id);
   if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
-  if (resource.verificationStatus !== "verified") {
-    res.status(400).json({ error: "Resource must be verified before registering on-chain" });
-    return;
-  }
-  if (resource.onchainStatus === "registered") {
-    res.status(409).json({ error: "Resource is already registered on-chain" });
+    res.status(404).json({ error: "Resource not found or not owned by publisher" });
     return;
   }
 
-  try {
-    // Build metadata from resource
-    const metadata = JSON.stringify({
-      title: resource.title,
-      description: resource.description ?? "",
-      contentHash: resource.contentHash,
-    });
-
-    const unsignedXdr = await buildRegisterTx(
-      resource.walletAddress,
-      resourceId,
-      resource.price,
-      metadata,
-    );
-
-    res.json({
-      unsignedXdr,
-      networkPassphrase: NETWORK_PASSPHRASE,
-      metadata: {
-        resourceId,
-        creator: resource.walletAddress,
-        price: resource.price,
-        title: resource.title,
-        description: resource.description,
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: "Failed to build register transaction", detail: err?.message });
-  }
+  res.json({ id: resource.id, listed: resource.listed });
 });
 
 // POST /resources/:id/register — register a verified resource on-chain (owner only)
@@ -374,6 +370,7 @@ router.post(
     const publisher = req.publisher!;
     const resourceId = req.params.id as string;
 
+  try {
     const resource = await getResourceById(resourceId);
     if (!resource) {
       res.status(404).json({ error: "Resource not found" });
@@ -413,7 +410,14 @@ router.post(
     }
     // "none" or "failed" → proceed (failed is retryable)
 
-    const { signedXdr } = req.body;
+    // Build and submit the registration transaction
+    const unsignedXdr = await buildRegisterTx(resourceId, resource.price, resource.contentHash);
+    const signedXdr = unsignedXdr; // We'll sign with the server's registry keypair
+    // Actually sign it
+    const { TransactionBuilder, Networks } = await import("@stellar/stellar-sdk");
+    const { Keypair } = await import("@stellar/stellar-sdk");
+    // For now, use the registry client approach
+    const result = await submitSignedTx(signedXdr);
 
     await db
       .update(resources)
@@ -549,8 +553,7 @@ router.post(
   },
 );
 
-// POST /resources/:id/price/prepare — build unsigned set_price tx (owner only)
-// Returns the XDR of an unsigned transaction the owner must sign client-side.
+// POST /resources/:id/price/prepare — prepare unsigned set_price tx (publisher only)
 router.post(
   "/resources/:id/price/prepare",
   apiKeyAuth,
@@ -570,9 +573,9 @@ router.post(
       return;
     }
 
-    const { price } = req.body;
+    const { newPrice } = req.body;
 
-    const unsignedXdr = await setPrice(resourceId, price);
+    const unsignedXdr = await setPrice(resourceId, newPrice);
     res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
   },
 );

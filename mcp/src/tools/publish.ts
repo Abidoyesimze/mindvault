@@ -21,6 +21,7 @@ import {
   STATE_FILE,
 } from "../runtime.js";
 import { insufficientFundsMessage } from "./registry.js";
+import { assertOnchainSetupReady } from "../onchainPreflight.js";
 import {
   isTimeoutError,
   mapHttpError,
@@ -58,6 +59,7 @@ import {
   signAndSendTracked,
   txStatusLookup,
 } from "../submittedTransaction.js";
+import { txPhaseFields } from "../txPhases.js";
 /**
  * Decimal USDC as on-chain stroops, throwing on an amount the shared converter
  * will not accept — a price that cannot be expressed exactly must not be
@@ -78,6 +80,9 @@ export async function register(
   email: string,
   walletAddress?: string,
 ): Promise<string> {
+  // Fail fast on a locally fatal on-chain config problem (missing/malformed
+  // contract ID, unrecognized network) before touching the network (#1054).
+  assertOnchainSetupReady();
   const wallet = requireWallet();
   const res = await jsonFetch(`${BASE_URL}/publishers`, {
     method: "POST",
@@ -109,6 +114,10 @@ export async function publish(args: {
       2,
     );
   }
+
+  // Dry runs stay offline; once the flow commits to on-chain work, fail fast
+  // on a locally fatal config problem (#1054).
+  assertOnchainSetupReady();
 
   const wallet = requireWallet();
   const apiKey = requireApiKey();
@@ -431,6 +440,9 @@ export async function registerOnchain(
   resourceId: string,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
 ): Promise<string> {
+  // This flow signs and submits a Soroban transaction; fail fast on a locally
+  // fatal on-chain config problem before preparing it (#1054).
+  assertOnchainSetupReady();
   const wallet = requireWallet();
   const apiKey = requireApiKey();
   if (!resourceId) throw new Error("resourceId is required.");
@@ -620,6 +632,7 @@ export async function updateMetadata(resourceId: string, metadata: string): Prom
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       metadata,
       txHash,
@@ -674,6 +687,7 @@ export async function setPrice(resourceId: string, price: string): Promise<strin
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       price,
       txHash,
@@ -732,6 +746,7 @@ export async function transferOwnership(resourceId: string, newCreator: string):
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       newCreator,
       txHash,
@@ -1130,6 +1145,7 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       listed,
       txHash,
@@ -1183,6 +1199,7 @@ export async function acceptTransfer(resourceId: string): Promise<string> {
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       txHash,
     },
@@ -1235,6 +1252,7 @@ export async function cancelTransfer(resourceId: string): Promise<string> {
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       txHash,
     },
