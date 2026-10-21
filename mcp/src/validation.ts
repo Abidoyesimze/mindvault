@@ -28,9 +28,15 @@
  */
 
 import { parseMetadataHash, MetadataHashError, METADATA_HASH_FORMAT_HINT } from "./metadataHash.js";
+import {
+  isBlockedAddress,
+  isBlockedHostname,
+  isHostAllowlisted,
+  parseUrlAllowlist,
+} from "./outboundUrl.js";
 import { CATALOG_MAX_LIMIT, CATALOG_SORT_VALUES } from "./catalogFilters.js";
 import { REGISTRY_LIST_MAX_LIMIT } from "./registryPagination.js";
-import { RECEIPT_EXPORT_MAX_LIMIT } from "./receipts.js";
+import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_ROW_FIELDS } from "./receipts.js";
 import { DEBUG_BUNDLE_MAX_AUDIT_LINES } from "./debugBundleSchema.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import {
@@ -38,6 +44,7 @@ import {
   MIN_SETTLEMENT_INTERVAL_MS,
   TRANSACTION_WAIT_POLICIES,
 } from "./settlement.js";
+import { StrKey } from "@stellar/stellar-sdk";
 
 // ── Spec model ────────────────────────────────────────────────────────────────
 
@@ -50,6 +57,11 @@ import {
  *                 MCP clients commonly send (`"true"`, `"1"`, `"yes"`, `0`, …)
  * - `hash`      — a metadata digest in the fixed format (see metadataHash.ts),
  *                 normalized to its canonical `"<algorithm>:<hex>"` form
+ * - `url`       — an absolute `http(s)` URL whose host is not a loopback,
+ *                 link-local, private, or otherwise reserved address (see
+ *                 outboundUrl.ts). The container host is checked here; the
+ *                 DNS-rebinding check runs on the live fetch path, not in this
+ *                 pure validator.
  * - `tag_array` — array of discovery tags for set_tags; normalized to lowercase,
  *                 validated against on-chain constraints (≤8 entries, each 1–32 chars,
  *                 only `[a-z0-9_-]`). Accepts a comma-separated string as well.
@@ -71,8 +83,11 @@ export type ArgumentKind =
   | "enum"
   | "flag"
   | "hash"
+  | "stellar_address"
+  | "stellar_secret"
   | "tag_array"
   | "string_array"
+  | "url"
   | "integer";
 
 export interface ArgumentSpec {
@@ -98,6 +113,13 @@ export interface ArgumentSpec {
    * service expects a bare digest (e.g. a Stellar transaction hash).
    */
   bareHex?: boolean;
+  /**
+   * When set, an `http(s)` value's host is additionally checked against the
+   * local/reserved-address guard — `string` only. Used for the metadata
+   * pointer, which may be `ipfs://`, `ar://`, a digest, or an `http(s)` URL;
+   * only the URL form carries a host to check.
+   */
+  rejectLocalHost?: boolean;
 }
 
 export type ToolArgumentSpec = Record<string, ArgumentSpec>;
@@ -159,12 +181,16 @@ const CONFIRM_PAID: ArgumentSpec = { kind: "flag" };
 /** Preview flag: publish/buy report what they would do without paying. */
 const DRY_RUN: ArgumentSpec = { kind: "flag" };
 
-/** Stellar public key (G... 56 chars). */
+/**
+ * Stellar Ed25519 public key (G… 56 chars).
+ *
+ * Uses the `stellar_address` kind so that both the StrKey format and the
+ * CRC-16 checksum are verified locally before any Horizon or Soroban RPC
+ * request is made. A key that passes the character-set regex but fails the
+ * checksum will be caught here and reported with a field-specific error.
+ */
 const STELLAR_ADDRESS: ArgumentSpec = {
-  kind: "string",
-  maxLength: 56,
-  pattern: /^G[A-Z2-7]{55}$/,
-  patternHint: "a Stellar public key (G… , 56 chars)",
+  kind: "stellar_address",
 };
 
 /** Metadata pointer (max 512 chars, supported prefix). */
@@ -176,6 +202,9 @@ const METADATA_POINTER: ArgumentSpec = {
   pattern: /^(ipfs:\/\/|ar:\/\/|https?:\/\/|sha256:|sha-256:|0x)/i,
   patternHint:
     "a valid metadata pointer starting with ipfs://, ar://, http(s)://, sha256:, sha-256:, or 0x (max 512 chars)",
+  // http(s) pointers are later dereferenced like any other outbound URL, so
+  // their host faces the same local/reserved-address guard (#1078).
+  rejectLocalHost: true,
 };
 
 const ATTESTATION_HASH: ArgumentSpec = { kind: "string", required: true, maxLength: 64 };
@@ -210,6 +239,8 @@ const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
   offset: { kind: "integer", min: 0 },
   tags: { kind: "string", maxLength: 256 },
   listed: { kind: "flag" },
+  cursor: { kind: "string", maxLength: 4096 },
+  bypassCache: { kind: "flag" },
 };
 
 // ── Per-tool specs ────────────────────────────────────────────────────────────
@@ -245,11 +276,8 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_setup_wallet: { profile: PROFILE_NAME, confirmMainnet: CONFIRM_MAINNET },
   mindvault_repair_sponsored_account: {
     secretKey: {
-      kind: "string",
+      kind: "stellar_secret",
       required: true,
-      maxLength: 56,
-      pattern: /^S[A-Z2-7]{55}$/,
-      patternHint: "a Stellar secret key (S… , 56 chars)",
     },
     profile: PROFILE_NAME,
     confirmMainnet: CONFIRM_MAINNET,
@@ -267,7 +295,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   },
   mindvault_browse: { ...CATALOG_FILTER_ARGS },
   mindvault_search: { ...CATALOG_FILTER_ARGS },
-  mindvault_preview: { resourceId: RESOURCE_ID },
+  mindvault_preview: { resourceId: RESOURCE_ID, bypassCache: { kind: "flag" } },
   mindvault_register: {
     name: { kind: "string", required: true, maxLength: 128 },
     email: {
@@ -277,12 +305,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
       pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
       patternHint: "an email address, e.g. agent@example.com",
     },
-    walletAddress: {
-      kind: "string",
-      maxLength: 56,
-      pattern: /^G[A-Z2-7]{55}$/,
-      patternHint: "a Stellar public key (G… , 56 chars)",
-    },
+    walletAddress: STELLAR_ADDRESS,
     confirmMainnet: CONFIRM_MAINNET,
   },
   mindvault_publish: {
@@ -290,7 +313,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     description: { kind: "string", maxLength: 2048 },
     price: { ...USDC_AMOUNT, required: true },
     externalUrl: {
-      kind: "string",
+      kind: "url",
       required: true,
       maxLength: 2048,
       pattern: /^https?:\/\/[^\s]+$/,
@@ -322,6 +345,13 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     since: { kind: "string", maxLength: 64 },
     until: { kind: "string", maxLength: 64 },
     limit: { kind: "integer", min: 1, max: RECEIPT_EXPORT_MAX_LIMIT },
+    offset: { kind: "integer", min: 0 },
+    fields: {
+      kind: "string_array",
+      pattern: new RegExp(`^(${RECEIPT_ROW_FIELDS.join("|")})$`),
+      patternHint: `a known receipt field (${RECEIPT_ROW_FIELDS.join(", ")})`,
+    },
+    includeSensitive: { kind: "flag" },
     groupBy: { kind: "enum", values: ["month"] },
   },
   mindvault_register_onchain: {
@@ -355,6 +385,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_check_consistency: {
     resourceId: RESOURCE_ID,
     expectedMetadataHash: { kind: "hash" },
+  },
+  mindvault_metadata_diff: {
+    resourceId: RESOURCE_ID,
   },
   mindvault_verify_attestation: {
     resourceId: ON_CHAIN_RESOURCE_ID,
@@ -467,13 +500,10 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_mainnet_banner: {},
   mindvault_import_wallet: {
     secretKey: {
-      kind: "string",
-      maxLength: 56,
-      pattern: /^S[A-Z2-7]{55}$/,
-      patternHint: "a Stellar secret key (S… , 56 chars)",
+      kind: "stellar_secret",
     },
     profile: PROFILE_NAME,
-    persist: { kind: "flag" },
+    confirm: { kind: "flag" },
     confirmMainnet: CONFIRM_MAINNET,
   },
   mindvault_rotate_publisher_key: {
@@ -500,8 +530,11 @@ export type ValidationIssueCode =
   | "pattern_mismatch"
   | "not_in_enum"
   | "invalid_hash"
+  | "invalid_stellar_address"
+  | "invalid_stellar_secret"
   | "invalid_tag_array"
-  | "invalid_string_array";
+  | "invalid_string_array"
+  | "blocked_url";
 
 export interface ValidationIssue {
   field: string;
@@ -555,6 +588,11 @@ function expectation(spec: ArgumentSpec): string {
       return "a boolean (true/false)";
     case "hash":
       return METADATA_HASH_FORMAT_HINT;
+    case "url":
+      return (
+        spec.patternHint ??
+        "an http(s) URL whose host is a public address (not loopback, link-local, or private)"
+      );
     case "tag_array":
       return "an array of 0–8 tag strings (each 1–32 chars, lowercase letters/digits/hyphens/underscores)";
     case "string_array": {
@@ -742,6 +780,96 @@ function validateStringArray(
   return normalized;
 }
 
+/**
+ * Validate a Stellar Ed25519 public key (stellar_address kind).
+ *
+ * StrKey.isValidEd25519PublicKey performs both a format check and a CRC-16
+ * checksum verification, so a key that passes the character-set regex but has
+ * a bad checksum (e.g. a single transposed character) is caught here rather
+ * than reaching Horizon or Soroban RPC where it would produce a confusing
+ * network error. The rejected value is never echoed back.
+ */
+function validateStellarAddress(
+  field: string,
+  value: unknown,
+  spec: ArgumentSpec,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (typeof value !== "string") {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a string; received ${typeName(value)}.`,
+    });
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    issues.push({
+      field,
+      code: "empty_string",
+      message: `${field} must not be empty. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  if (!StrKey.isValidEd25519PublicKey(trimmed)) {
+    issues.push({
+      field,
+      code: "invalid_stellar_address",
+      message: `${field} is not a valid Stellar public key. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Validate a Stellar Ed25519 secret seed (stellar_secret kind).
+ *
+ * StrKey.isValidEd25519SecretSeed performs both a format check and a CRC-16
+ * checksum verification. The rejected value is never echoed back to prevent
+ * secret leakage in agent transcripts.
+ */
+function validateStellarSecret(
+  field: string,
+  value: unknown,
+  spec: ArgumentSpec,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (typeof value !== "string") {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a string; received ${typeName(value)}.`,
+    });
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    issues.push({
+      field,
+      code: "empty_string",
+      message: `${field} must not be empty. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  if (!StrKey.isValidEd25519SecretSeed(trimmed)) {
+    issues.push({
+      field,
+      code: "invalid_stellar_secret",
+      message: `${field} is not a valid Stellar secret key. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  return trimmed;
+}
+
 function validateFlag(
   field: string,
   value: unknown,
@@ -811,6 +939,24 @@ function validateString(
       message: `${field} is malformed. Expected ${expectation(spec)}.`,
     });
     return undefined;
+  }
+  if (spec.rejectLocalHost && /^https?:\/\//i.test(trimmed)) {
+    let host: string;
+    try {
+      host = new URL(trimmed).hostname;
+    } catch {
+      issues.push({
+        field,
+        code: "pattern_mismatch",
+        message: `${field} is not a valid http(s) URL.`,
+      });
+      return undefined;
+    }
+    const hostIssue = hostSafetyIssue(host, field);
+    if (hostIssue) {
+      issues.push(hostIssue);
+      return undefined;
+    }
   }
   return trimmed;
 }
@@ -912,6 +1058,112 @@ function validateHash(
   }
 }
 
+/**
+ * Validate an `http(s)` URL whose host must not be local or reserved (#1078).
+ *
+ * This is the pure half of the outbound-URL guard in `outboundUrl.ts`: it
+ * enforces the scheme, rejects literal IP and structurally-local hostnames,
+ * and honours `MINDVAULT_URL_ALLOWLIST`. It never touches DNS — a named host
+ * that resolves to a private address is caught on the live fetch path
+ * (`resolveOutboundUrl` with a resolver), not here, because argument
+ * validation must stay free of I/O.
+ */
+function validateUrl(
+  field: string,
+  value: unknown,
+  spec: ArgumentSpec,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (typeof value !== "string") {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a string; received ${typeName(value)}.`,
+    });
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    issues.push({
+      field,
+      code: "missing_required",
+      message: `${field} must be a non-empty URL.`,
+    });
+    return undefined;
+  }
+  if (spec.maxLength !== undefined && trimmed.length > spec.maxLength) {
+    issues.push({
+      field,
+      code: "too_long",
+      message: `${field} must be at most ${spec.maxLength} characters; received ${trimmed.length}.`,
+    });
+    return undefined;
+  }
+  if (spec.pattern && !spec.pattern.test(trimmed)) {
+    issues.push({
+      field,
+      code: "pattern_mismatch",
+      message: `${field} is malformed. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    issues.push({
+      field,
+      code: "pattern_mismatch",
+      message: `${field} is not a valid absolute URL. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    issues.push({
+      field,
+      code: "pattern_mismatch",
+      message: `${field} must use the http or https scheme.`,
+    });
+    return undefined;
+  }
+
+  const host = parsed.hostname;
+  const hostIssue = hostSafetyIssue(host, field);
+  if (hostIssue) {
+    issues.push(hostIssue);
+    return undefined;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Reject a host that is local or a blocked address, unless the operator has
+ * allowlisted it. Returns the issue to record, or null when the host is fine.
+ */
+function hostSafetyIssue(host: string, field: string): ValidationIssue | null {
+  const allowlist = parseUrlAllowlist(process.env.MINDVAULT_URL_ALLOWLIST);
+  if (isHostAllowlisted(host, allowlist)) return null;
+  if (isBlockedHostname(host)) {
+    return {
+      field,
+      code: "blocked_url",
+      message: `${field} host is a local or reserved name and cannot be used as an outbound URL.`,
+    };
+  }
+  const hostLiteral = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const isLiteral = hostLiteral.includes(":") || /^\d{1,3}(\.\d{1,3}){3}$/.test(hostLiteral);
+  if (isLiteral && isBlockedAddress(hostLiteral)) {
+    return {
+      field,
+      code: "blocked_url",
+      message: `${field} host is a private, loopback, or reserved address and cannot be used as an outbound URL.`,
+    };
+  }
+  return null;
+}
+
 /** Validated, normalized arguments for a tool call. */
 export type ValidatedArgs = Record<string, string | boolean | string[] | number>;
 
@@ -988,6 +1240,16 @@ export function validateToolArgs(tool: string, rawArgs: unknown): ValidatedArgs 
         if (hash !== undefined) out[field] = hash;
         break;
       }
+      case "stellar_address": {
+        const addr = validateStellarAddress(field, value, fieldSpec, issues);
+        if (addr !== undefined) out[field] = addr;
+        break;
+      }
+      case "stellar_secret": {
+        const secret = validateStellarSecret(field, value, fieldSpec, issues);
+        if (secret !== undefined) out[field] = secret;
+        break;
+      }
       case "integer": {
         const num = validateInteger(field, value, fieldSpec, issues);
         if (num !== undefined) out[field] = num;
@@ -996,6 +1258,11 @@ export function validateToolArgs(tool: string, rawArgs: unknown): ValidatedArgs 
       case "string": {
         const text = validateString(field, value, fieldSpec, issues);
         if (text !== undefined) out[field] = text;
+        break;
+      }
+      case "url": {
+        const link = validateUrl(field, value, fieldSpec, issues);
+        if (link !== undefined) out[field] = link;
         break;
       }
       case "tag_array": {
