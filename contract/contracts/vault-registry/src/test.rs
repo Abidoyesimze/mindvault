@@ -363,6 +363,123 @@ fn register_batch_with_content_hashes() {
     assert_eq!(r1.content_hash, None);
 }
 
+// ─── register_batch within-batch duplicate ids (#967) ─────────────────────
+
+#[test]
+fn register_batch_rejects_duplicate_ids_within_batch() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    for _ in 0..2 {
+        items.push_back(BatchRegisterItem {
+            id: String::from_str(&env, "dup0"),
+            price: 100i128,
+            metadata: String::from_str(&env, "ipfs://QmDup"),
+            tags: empty_tags(&env),
+            content_hash: None,
+        });
+    }
+
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(
+        res,
+        Err(Ok(Error::AlreadyRegistered)),
+        "a repeated id inside one register_batch call must abort with a stable error"
+    );
+
+    // No partial effects: the id was not registered, and the counter is intact.
+    assert!(!client.exists(&String::from_str(&env, "dup0")));
+    assert_eq!(client.count(), 0);
+}
+
+#[test]
+fn register_batch_duplicate_ids_leave_no_events() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup1"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmA"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup1"),
+        price: 200i128,
+        metadata: String::from_str(&env, "ipfs://QmB"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
+    // A rejected call must not emit register events.
+    assert_eq!(env.events().all().len(), 0);
+}
+
+#[test]
+fn register_batch_rejects_duplicates_even_when_other_items_valid() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "good0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmGood"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup2"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmDup"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup2"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmDup"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
+    // The valid sibling is also left unregistered — the whole call is atomic
+    // with respect to within-batch duplicate detection.
+    assert!(!client.exists(&String::from_str(&env, "good0")));
+    assert!(!client.exists(&String::from_str(&env, "dup2")));
+    assert_eq!(client.count(), 0);
+}
+
+#[test]
+fn register_batch_allows_distinct_ids_as_before() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dist0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://Qm0"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dist1"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://Qm1"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+
+    let result = client.register_batch(&creator, &items);
+    assert_eq!(result.succeeded.len(), 2);
+    assert_eq!(result.failed.len(), 0);
+    assert_eq!(client.count(), 2);
+}
+
 // ─── register_batch listing-default parity (#773) ─────────────────────────
 
 #[test]
@@ -375,7 +492,7 @@ fn register_batch_contract_paused_aborts_entire_batch() {
     // Pre-register one item so the batch has something before the paused item.
     client.register(
         &creator,
-        &String::from_str(&env, "before-pause"),
+        &String::from_str(&env, "beforepause"),
         &100i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
@@ -2494,6 +2611,8 @@ fn expired_admin_nomination_can_be_replaced() {
     assert_eq!(client.try_nominate_new_admin(&replacement), Ok(Ok(())));
     assert_eq!(client.pending_admin(), Some(replacement.clone()));
     assert!(client.pending_admin_expiry().unwrap() > expiry);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
     client.accept_admin(&replacement);
     assert_eq!(client.admin(), Some(replacement));
 }
@@ -4718,6 +4837,9 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.accept_admin(&admin2);
     record(&env, &client, &mut observed);
 
+    client.set_registry_terms_hash(&String::from_str(&env, "regterms")); // -> "setregt"
+    record(&env, &client, &mut observed);
+
     // Verifier role, verification mirror, freeze, and index repair.
     let old_verifier = Address::generate(&env);
     let verifier = Address::generate(&env);
@@ -6367,6 +6489,313 @@ fn frozen_resource_still_allows_price_listing_tags_and_ownership_mutations() {
     assert!(client.get(&id).frozen);
 }
 
+// ─── update_metadata_many (#968) and freeze invariants (#969) ─────────────
+
+#[test]
+fn update_metadata_many_updates_owned_resources() {
+    let (env, creator, client) = setup();
+    let id_a = register_default(&env, &creator, &client, "umma");
+    let id_b = register_default(&env, &creator, &client, "ummb");
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id_a.clone(),
+        metadata: String::from_str(&env, "ipfs://newa"),
+    });
+    updates.push_back(BatchMetadataUpdate {
+        id: id_b.clone(),
+        metadata: String::from_str(&env, "ipfs://newb"),
+    });
+
+    client.update_metadata_many(&creator, &updates);
+    assert_eq!(
+        client.get(&id_a).metadata,
+        String::from_str(&env, "ipfs://newa")
+    );
+    assert_eq!(
+        client.get(&id_b).metadata,
+        String::from_str(&env, "ipfs://newb")
+    );
+}
+
+#[test]
+fn update_metadata_many_is_atomic_on_validation_failure() {
+    let (env, creator, client) = setup();
+    let id_a = register_default(&env, &creator, &client, "umaa");
+    let id_b = register_default(&env, &creator, &client, "umab");
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id_a.clone(),
+        metadata: String::from_str(&env, "ipfs://good"),
+    });
+    updates.push_back(BatchMetadataUpdate {
+        id: id_b.clone(),
+        metadata: String::from_str(&env, "badprefix://nope"),
+    });
+
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert!(res.is_err(), "invalid pointer must fail the whole batch");
+    // No writes: both resources keep their original pointers.
+    assert_eq!(
+        client.get(&id_a).metadata,
+        String::from_str(&env, "ipfs://m")
+    );
+    assert_eq!(
+        client.get(&id_b).metadata,
+        String::from_str(&env, "ipfs://m")
+    );
+}
+
+#[test]
+fn update_metadata_many_rejects_frozen_resource() {
+    let (env, creator, client) = setup();
+    let id_ok = register_default(&env, &creator, &client, "umfo");
+    let id_frozen = register_default(&env, &creator, &client, "umff");
+    client.freeze_metadata(&id_frozen);
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id_ok.clone(),
+        metadata: String::from_str(&env, "ipfs://ok"),
+    });
+    updates.push_back(BatchMetadataUpdate {
+        id: id_frozen.clone(),
+        metadata: String::from_str(&env, "ipfs://nope"),
+    });
+
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+    // Atomic: the unfrozen sibling is also untouched.
+    assert_eq!(
+        client.get(&id_ok).metadata,
+        String::from_str(&env, "ipfs://m")
+    );
+}
+
+#[test]
+fn update_metadata_many_rejects_content_hash_resource() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "umch");
+    client.register_with_hash(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://bound"),
+        &empty_tags(&env),
+        &Some(String::from_str(&env, "sha256:abcd1234")),
+    );
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id.clone(),
+        metadata: String::from_str(&env, "ipfs://divergent"),
+    });
+
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+}
+
+#[test]
+fn update_metadata_many_rejects_unauthorized_creator() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "umua");
+    let stranger = Address::generate(&env);
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id,
+        metadata: String::from_str(&env, "ipfs://x"),
+    });
+
+    let res = client.try_update_metadata_many(&stranger, &updates);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn update_metadata_many_rejects_oversized_batch() {
+    let (env, creator, client) = setup();
+    let mut updates = Vec::new(&env);
+    for i in 0..11u32 {
+        updates.push_back(BatchMetadataUpdate {
+            id: String::from_str(&env, "x"),
+            metadata: String::from_str(&env, "ipfs://m"),
+        });
+        let _ = i;
+    }
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::BatchTooLarge)));
+}
+
+#[test]
+fn update_metadata_many_emits_no_events_on_rejection() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "umne");
+    client.freeze_metadata(&id);
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id,
+        metadata: String::from_str(&env, "ipfs://nope"),
+    });
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+    // Rejected call must not emit update (`updmeta`) events.
+    let all = env.events().all();
+    let mut has_updmeta = false;
+    for i in 0..all.len() {
+        let (_, topics, _) = all.get(i).unwrap();
+        if topics.len() >= 2 {
+            let t0: soroban_sdk::Symbol = <soroban_sdk::Symbol as soroban_sdk::TryFromVal<
+                Env,
+                soroban_sdk::Val,
+            >>::try_from_val(
+                &env, &topics.get(0).unwrap()
+            )
+            .ok()
+            .unwrap();
+            if t0 == soroban_sdk::symbol_short!("updmeta") {
+                has_updmeta = true;
+            }
+        }
+    }
+    assert!(
+        !has_updmeta,
+        "rejected update_metadata_many must not emit updmeta"
+    );
+}
+
+#[test]
+fn frozen_resource_rejects_set_metadata_pointers_divergent_primary() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "fspd");
+    client.freeze_metadata(&id);
+
+    let pointers = Vec::from_array(
+        &env,
+        [
+            String::from_str(&env, "ipfs://newprimary"),
+            String::from_str(&env, "ar://mirror"),
+        ],
+    );
+    let res = client.try_set_metadata_pointers(&id, &pointers, &0);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+    assert_eq!(client.get(&id).metadata, String::from_str(&env, "ipfs://m"));
+}
+
+#[test]
+fn frozen_resource_set_metadata_pointers_same_primary_is_noop() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "fsps");
+    let orig = client.get(&id).metadata.clone();
+    client.freeze_metadata(&id);
+
+    // Re-publishing mirrors with the same primary is the documented no-op.
+    let pointers = Vec::from_array(&env, [orig.clone(), String::from_str(&env, "ar://mirror")]);
+    client.set_metadata_pointers(&id, &pointers, &0);
+    assert_eq!(client.get(&id).metadata, orig);
+    assert!(client.get(&id).frozen);
+}
+
+// ─── state_digest (#966) ──────────────────────────────────────────────────
+
+#[test]
+fn state_digest_is_deterministic_for_same_state() {
+    let (env, creator, client) = setup();
+    let _id = register_default(&env, &creator, &client, "dga");
+    let _id2 = register_default(&env, &creator, &client, "dgb");
+
+    let page1 = client.state_digest(&0, &20);
+    let page2 = client.state_digest(&0, &20);
+    assert_eq!(page1.page_hash, page2.page_hash);
+    assert_eq!(page1.encoding_version, STATE_DIGEST_ENCODING_VERSION);
+    assert_eq!(page1.total, 2);
+}
+
+#[test]
+fn state_digest_changes_when_state_changes() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "dgc");
+
+    let before = client.state_digest(&0, &20);
+    client.set_price(&id, &999i128);
+    let after = client.state_digest(&0, &20);
+    assert_ne!(before.page_hash, after.page_hash);
+}
+
+#[test]
+fn state_digest_paginates_with_next_cursor() {
+    let (env, creator, client) = setup();
+    for name in ["dgp0", "dgp1", "dgp2", "dgp3", "dgp4"] {
+        register_default(&env, &creator, &client, name);
+    }
+
+    let page = client.state_digest(&0, &2);
+    assert_eq!(page.total, 5);
+    assert_eq!(page.next_cursor, Some(2u32));
+
+    let page2 = client.state_digest(&2, &2);
+    assert_eq!(page2.next_cursor, Some(4u32));
+
+    let page3 = client.state_digest(&4, &2);
+    assert_eq!(page3.next_cursor, None);
+}
+
+#[test]
+fn state_digest_client_verification_roundtrip() {
+    // Demonstrates how a client verifies `page_hash` by reconstructing the
+    // documented preimage from `get`/`list` output and comparing sha256.
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "dgv");
+    let r = client.get(&id);
+
+    let page = client.state_digest(&0, &20);
+    assert_eq!(page.encoding_version, STATE_DIGEST_ENCODING_VERSION);
+
+    // Reconstruct the v1 preimage exactly as documented on `state_digest`.
+    let mut preimage = soroban_sdk::Bytes::from_slice(&env, b"mv-state-digest-v1");
+    preimage.extend_from_array(&1u32.to_be_bytes()); // total
+    preimage.extend_from_array(&0u32.to_be_bytes()); // start
+                                                     // Entry: id
+    let id_bytes = r.id.clone().to_val(); // placeholder; real encoding below
+    let _ = id_bytes;
+    let id_str = r.id.clone();
+    let mut id_buf = alloc::vec![0u8; id_str.len() as usize];
+    id_str.copy_into_slice(&mut id_buf);
+    preimage.extend_from_array(&(id_buf.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(&id_buf);
+    // price
+    preimage.extend_from_array(&r.price.to_be_bytes());
+    // metadata
+    let mut meta_buf = alloc::vec![0u8; r.metadata.len() as usize];
+    r.metadata.copy_into_slice(&mut meta_buf);
+    preimage.extend_from_array(&(meta_buf.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(&meta_buf);
+    // state, frozen, version, updated_at
+    preimage.extend_from_array(&(r.state as u32).to_be_bytes());
+    preimage.extend_from_array(&[r.frozen as u8]);
+    preimage.extend_from_array(&r.version.to_be_bytes());
+    preimage.extend_from_array(&r.updated_at.to_be_bytes());
+    // content_hash option
+    match &r.content_hash {
+        Some(hash) => {
+            preimage.extend_from_array(&[1u8]);
+            let mut hbuf = alloc::vec![0u8; hash.len() as usize];
+            hash.copy_into_slice(&mut hbuf);
+            preimage.extend_from_array(&(hbuf.len() as u32).to_be_bytes());
+            preimage.extend_from_slice(&hbuf);
+        }
+        None => preimage.extend_from_array(&[0u8]),
+    }
+
+    let recomputed = env.crypto().sha256(&preimage).to_array();
+    assert_eq!(
+        page.page_hash,
+        soroban_sdk::BytesN::from_array(&env, &recomputed),
+        "a client that reconstructs the documented v1 preimage must get the same page_hash"
+    );
+}
+
 // ─── Index repair (#428) ───────────────────────────────────────────────────
 
 #[test]
@@ -7549,9 +7978,10 @@ fn record_payment_emits_payment_event() {
 
     client.record_payment(&settler, &receipt_id, &id, &payer, &amount, &tx_hash);
 
-    // env.events().all() reflects the most recent invocation
+    // env.events().all() reflects the most recent invocation: `payment`
+    // followed by the `nomemo` provenance warning.
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "exactly one event should be emitted");
+    assert_eq!(all.len(), 2, "payment + nomemo events should be emitted");
 
     let (_, topics, data) = all.get(0).unwrap();
     assert_eq!(
@@ -7806,7 +8236,7 @@ fn record_payment_settle_payment_anchor_end_to_end() {
     };
 
     let payment_events = env.events().all();
-    assert_eq!(payment_events.len(), 1);
+    assert_eq!(payment_events.len(), 2);
     let (payment_contract, payment_topics, payment_data) = payment_events.get(0).unwrap();
     assert_eq!(payment_contract, client.address);
     assert_eq!(payment_topics.len(), 2);
@@ -9507,8 +9937,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 37] {
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 31] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 47] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -9533,6 +9962,26 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 31] {
             "PaymentIndex",
             3,
         ),
+        (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
+        (DataKey::PaymentRecipient(id.clone()), "PaymentRecipient", 2),
+        (DataKey::RefundReceipt(id.clone()), "RefundReceipt", 2),
+        (DataKey::RefundTxHash(id.clone()), "RefundTxHash", 2),
+        (DataKey::RefundDeadline(id.clone()), "RefundDeadline", 2),
+        (DataKey::RefundedAmount(id.clone()), "RefundedAmount", 2),
+        (DataKey::RefundWindow, "RefundWindow", 1),
+        (DataKey::VerifierHistory(who.clone()), "VerifierHistory", 2),
+        (DataKey::CreatorEarnings(who.clone()), "CreatorEarnings", 2),
+        (DataKey::FlagModerator(id.clone()), "FlagModerator", 2),
+        (DataKey::Lease(id.clone(), who.clone()), "Lease", 3),
+        (
+            DataKey::AnchorAttempts(id.clone(), who.clone()),
+            "AnchorAttempts",
+            3,
+        ),
+        (DataKey::RegistryTerms, "RegistryTerms", 1),
+        (DataKey::Paused, "Paused", 1),
+        (DataKey::PauseUntil, "PauseUntil", 1),
+        (DataKey::Settler(who.clone()), "Settler", 2),
         (
             DataKey::PurchaseReceipt(id.clone(), who.clone()),
             "PurchaseReceipt",
@@ -9543,16 +9992,17 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 31] {
             "AnchorFailure",
             3,
         ),
+        (
+            DataKey::AnchorAttempts(id.clone(), who.clone()),
+            "AnchorAttempts",
+            3,
+        ),
         (DataKey::TagIndex(id.clone()), "TagIndex", 2),
         (DataKey::FeeConfig, "FeeConfig", 1),
         (DataKey::Moderator(who.clone()), "Moderator", 2),
         (DataKey::DisputeFlag(id.clone()), "DisputeFlag", 2),
-        (DataKey::Paused, "Paused", 1),
-        (DataKey::PauseUntil, "PauseUntil", 1),
-        (DataKey::Settler(who.clone()), "Settler", 2),
         (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
-        (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
         (DataKey::AttestationHash(id.clone()), "AttestationHash", 2),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
         (
@@ -9569,17 +10019,8 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 31] {
         ),
         (DataKey::MemoHash(id.clone()), "MemoHash", 2),
         (DataKey::FeeDestination, "FeeDestination", 1),
-        (DataKey::RefundReceipt(id.clone()), "RefundReceipt", 2),
-        (DataKey::RefundedAmount(id.clone()), "RefundedAmount", 2),
-        (DataKey::RefundTxHash(id.clone()), "RefundTxHash", 2),
-        (DataKey::RefundDeadline(id.clone()), "RefundDeadline", 2),
-        (DataKey::RefundWindow, "RefundWindow", 1),
-        (DataKey::PaymentRecipient(id.clone()), "PaymentRecipient", 2),
-        (DataKey::TopTags, "TopTags", 1),
-        (DataKey::TagCount(id), "TagCount", 2),
-        (DataKey::FlagModerator(id), "FlagModerator", 2),
-        (DataKey::CreatorEarnings(who.clone()), "CreatorEarnings", 2),
-        (DataKey::VerifierHistory(who.clone()), "VerifierHistory", 2),
+        (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
+        (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
     ]
 }
 
@@ -9602,27 +10043,24 @@ fn storage_key_variant_names_are_stable() {
 fn storage_key_arity_is_stable() {
     let env = Env::default();
     for (key, name, arity) in storage_key_wire_contract(&env).iter() {
+        let parts = storage_key_parts(&env, key);
         assert_eq!(
-            storage_key_parts(&env, key).len(),
+            parts.len() as u32,
             *arity,
-            "DataKey::{name} must keep {arity} encoded element(s) (the discriminant \
-             plus its arguments). Adding or removing an argument re-points the \
-             variant at a different address and strands its existing entries."
+            "DataKey::{name} encodes with arity {arity}. Changing the arity of a \
+             storage key variant changes its on-chain address and strands every \
+             entry written under the old shape."
         );
     }
 }
 
-/// Compile-time tripwire: a new `DataKey` variant fails to match here, which
-/// forces whoever adds it to also add it to `storage_key_wire_contract` and to
-/// think about what the new key means for state already on-chain.
 #[test]
 fn storage_key_migration_covers_every_variant() {
     let env = Env::default();
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        37,
-        31,
+        47,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -9641,18 +10079,31 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::NetworkId => "NetworkId",
             DataKey::PaymentReceipt(_) => "PaymentReceipt",
             DataKey::PaymentIndex(_, _) => "PaymentIndex",
+            DataKey::PaymentTxHash(_) => "PaymentTxHash",
+            DataKey::PaymentRecipient(_) => "PaymentRecipient",
+            DataKey::RefundReceipt(_) => "RefundReceipt",
+            DataKey::RefundTxHash(_) => "RefundTxHash",
+            DataKey::RefundDeadline(_) => "RefundDeadline",
+            DataKey::RefundedAmount(_) => "RefundedAmount",
+            DataKey::RefundWindow => "RefundWindow",
+            DataKey::VerifierHistory(_) => "VerifierHistory",
+            DataKey::CreatorEarnings(_) => "CreatorEarnings",
+            DataKey::FlagModerator(_) => "FlagModerator",
+            DataKey::Lease(_, _) => "Lease",
+            DataKey::AnchorAttempts(_, _) => "AnchorAttempts",
+            DataKey::RegistryTerms => "RegistryTerms",
+            DataKey::Paused => "Paused",
+            DataKey::PauseUntil => "PauseUntil",
+            DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::AnchorFailure(_, _) => "AnchorFailure",
+            DataKey::AnchorAttempts(_, _) => "AnchorAttempts",
             DataKey::TagIndex(_) => "TagIndex",
             DataKey::FeeConfig => "FeeConfig",
             DataKey::Moderator(_) => "Moderator",
             DataKey::DisputeFlag(_) => "DisputeFlag",
-            DataKey::Paused => "Paused",
-            DataKey::PauseUntil => "PauseUntil",
-            DataKey::Settler(_) => "Settler",
             DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
-            DataKey::PaymentTxHash(_) => "PaymentTxHash",
             DataKey::AttestationHash(_) => "AttestationHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
             DataKey::PendingAdminNominatedAt => "PendingAdminNominatedAt",
@@ -9661,17 +10112,8 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::CreatorListedCount(_) => "CreatorListedCount",
             DataKey::MemoHash(_) => "MemoHash",
             DataKey::FeeDestination => "FeeDestination",
-            DataKey::RefundReceipt(_) => "RefundReceipt",
-            DataKey::RefundedAmount(_) => "RefundedAmount",
-            DataKey::RefundTxHash(_) => "RefundTxHash",
-            DataKey::RefundDeadline(_) => "RefundDeadline",
-            DataKey::RefundWindow => "RefundWindow",
-            DataKey::PaymentRecipient(_) => "PaymentRecipient",
-            DataKey::TopTags => "TopTags",
-            DataKey::TagCount(_) => "TagCount",
-            DataKey::FlagModerator(_) => "FlagModerator",
-            DataKey::CreatorEarnings(_) => "CreatorEarnings",
-            DataKey::VerifierHistory(_) => "VerifierHistory",
+            DataKey::MetadataPointers(_) => "MetadataPointers",
+            DataKey::RecoveryAdmin => "RecoveryAdmin",
         };
         assert_eq!(
             matched, *name,
@@ -11227,3 +11669,4 @@ include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
+include!("test/stellar_wave_970_971_975_976.rs");

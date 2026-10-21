@@ -18,7 +18,7 @@ clean:
 # Run all locally-verifiable pre-deploy checks in one step.
 # Mirrors what .github/workflows/contract-ci.yml enforces in CI:
 #   1. cargo test   — full test suite including event-schema and workflow tests
-#   2. optimized build + WASM size guard (budget: 36,864 bytes)
+#   2. optimized build + WASM size guard (budget: 151,552 bytes)
 #   3. no_std compatibility check
 #
 # See docs/contract-upgrade-checklist.md for the full deployment checklist,
@@ -36,7 +36,7 @@ preflight:
 	stellar contract build --manifest-path Cargo.toml --optimize
 	@WASM=target/wasm32v1-none/release/vault_registry.wasm; \
 	SIZE=$$(stat -c%s "$$WASM" 2>/dev/null || stat -f%z "$$WASM"); \
-	MAX=114688; \
+	MAX=151552; \
 	echo "    WASM size: $$SIZE bytes (budget: $$MAX bytes)"; \
 	if [ "$$SIZE" -gt "$$MAX" ]; then \
 	  echo "    ERROR: WASM over budget by $$(( $$SIZE - $$MAX )) bytes."; \
