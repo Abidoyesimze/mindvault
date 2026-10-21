@@ -1692,7 +1692,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // was invisible to the generated docs and the schema snapshots (#596).
     name: "mindvault_purchase_history",
     description:
-      "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Filter by resourceId and network (exact match), or search resource ids and titles with a case-insensitive query. Filters can be combined. Returns newest first. Each receipt includes a pre-resolved explorerUrl for the settlement transaction (null when no txHash was recorded) — no external join is needed. To check live on-chain settlement status, pass the receipt's txHash to mindvault_tx_status.",
+      "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Filter by resourceId and network (exact match), or search resource ids and titles with a case-insensitive query. Filters can be combined. Pass idempotencyKey to resolve a purchase attempt whose response was lost before a receipt arrived: returns status 'unknown'/'pending'/'settled'/'failed' for that key (profile-scoped). Returns newest first. Each receipt includes a pre-resolved explorerUrl for the settlement transaction (null when no txHash was recorded) — no external join is needed. To check live on-chain settlement status, pass the receipt's txHash to mindvault_tx_status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1712,6 +1712,12 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Optional case-insensitive text search across receipt resource ids and titles.",
           examples: ["stellar", "res-001"],
+        },
+        idempotencyKey: {
+          type: "string",
+          description:
+            "Optional. Client idempotency key sent with mindvault_buy to resolve a purchase whose response was lost before a receipt arrived. Profile-scoped.",
+          examples: ["buy:cm7x8y9z:9f3b..."],
         },
       },
       required: [],

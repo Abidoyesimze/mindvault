@@ -1,9 +1,5 @@
-#!/usr/bin/env node
-/**
- * MindVault MCP Server
- * Exposes vault tools to AI agents via the Model Context Protocol.
- */
-
+import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   checkContractBindings,
   createRegistryClient,
@@ -2206,14 +2202,36 @@ async function publish(args: {
 
   const paidFetch = makePaidFetch(wallet);
 
-  const verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: `Title: ${args.title}\nDescription: ${args.description ?? ""}\nURL: ${args.externalUrl}`,
-      resourceId: resource.id,
-    }),
-  });
+  let verifyRes: Response;
+  try {
+    verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: `Title: ${args.title}\nDescription: ${args.description ?? ""}\nURL: ${args.externalUrl}`,
+        resourceId: resource.id,
+      }),
+    });
+  } catch (err) {
+    if (isTimeoutError(err)) {
+      try {
+        const snapshot = await publishStatus({ resourceId: resource.id });
+        return [
+          `Resource created (id: ${resource.id}) but verification timed out (ambiguous).`,
+          `The server may have committed the verification despite the lost response; no duplicate publish was attempted by the client.`,
+          `Resolved status (check before retrying):`,
+          snapshot,
+          `Retry only after confirming the verification status with mindvault_publish_status. Do not resubmit this publish blindly.`,
+        ].join("\n");
+      } catch {
+        return [
+          `Resource created (id: ${resource.id}) but verification timed out (ambiguous).`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying — do not blindly re-publish (it may already be verified/registered).`,
+        ].join("\n");
+      }
+    }
+    throw mcpError(mapTransportError({ operation: "Publish verification failed", source: "x402", error: err }));
+  }
   metrics.recordPayment(verifyRes.ok);
 
   const verifyData = await verifyRes.json().catch(() => null);
@@ -2239,10 +2257,32 @@ async function publish(args: {
       .join("\n");
   }
 
-  const registerRes = await jsonFetch(`${BASE_URL}/resources/${resource.id}/register`, {
-    method: "POST",
-    headers: { "x-api-key": apiKey },
-  });
+  let registerRes: ApiResponse<any>;
+  try {
+    registerRes = await jsonFetch(`${BASE_URL}/resources/${resource.id}/register`, {
+      method: "POST",
+      headers: { "x-api-key": apiKey },
+    });
+  } catch (err) {
+    if (isTimeoutError(err)) {
+      try {
+        const snapshot = await publishStatus({ resourceId: resource.id });
+        return [
+          `Resource created and verification attempted for "${resource.id}"; on-chain registration timed out (ambiguous).`,
+          `The server may have already registered it despite the lost response.`,
+          `Resolved status (check before retrying):`,
+          snapshot,
+          `Retry registration only after confirming status with mindvault_publish_status / mindvault_registry_lookup. Do not submit blindly.`,
+        ].join("\n");
+      } catch {
+        return [
+          `Resource created and verification attempted for "${resource.id}"; on-chain registration timed out (ambiguous).`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying registration — avoid duplicate registration.`,
+        ].join("\n");
+      }
+    }
+    throw mcpError(mapTransportError({ operation: "On-chain registration failed", source: "api", error: err }));
+  }
 
   const onchainStatus: string = registerRes.ok
     ? (registerRes.data.onchainStatus ?? "registered")
@@ -2373,10 +2413,13 @@ export async function buy(
     : null;
 
   const paidFetch = makePaidFetch(wallet);
+  const clientIdempotencyKey = `buy:${resourceId}:${randomUUID()}`;
   let res: Response;
   try {
     await onProgress?.(2, 4, "Submitting payment");
-    res = await paidFetch(`${BASE_URL}/resources/${resourceId}`);
+    res = await paidFetch(`${BASE_URL}/resources/${resourceId}`, {
+      headers: { "Idempotency-Key": clientIdempotencyKey },
+    });
   } catch (err) {
     metrics.recordPayment(false);
     throw mcpError(mapTransportError({ operation: "Buy failed", source: "x402", error: err }));
@@ -2411,6 +2454,7 @@ export async function buy(
       network: NETWORK,
       txHash,
       receiptRef: receipt?.paymentId != null ? String(receipt.paymentId) : null,
+      clientIdempotencyKey,
       ...(title ? { title } : {}),
     });
     recordResourceHistory({
@@ -4106,7 +4150,7 @@ async function dispatchToolOutcome(
       case "mindvault_lease_status":
         return leaseStatus(requiredString(args, "resourceId"), optionalString(args, "holder"));
       case "mindvault_purchase_history":
-        return purchaseHistoryTool(rawRecord);
+        return purchaseHistoryTool(rawRecord, { profile: activeProfileName });
       case "mindvault_export_receipts":
         return exportReceiptsToolWithTimeout(
           rawRecord,
