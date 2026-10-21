@@ -222,7 +222,9 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_listed_page", "—"),
     ("list_by_dispute_status_page", "—"),
     ("list_by_creator_page", "—"),
+    ("list_by_creator_page_filtered", "—"),
     ("list_by_tag_page", "—"),
+    ("search_by_tag_prefix", "—"),
     // ── Verification ──────────────────────────────────────────────────────
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
@@ -2727,6 +2729,70 @@ impl VaultRegistry {
         result
     }
 
+    /// Bounded discovery read for the resources that carry a tag sharing a
+    /// normalized prefix.
+    ///
+    /// This complements [`list_by_tag`], which only resolves one exact tag.
+    /// The prefix is normalized with exactly the same rules tags are stored
+    /// with ([`Self::normalize_tag`]: trim ASCII whitespace, lowercase ASCII
+    /// letters), so `"  DATA "` resolves the same way as `"data"`.
+    ///
+    /// - A prefix that normalizes to the empty string would match every tag
+    ///   in the catalog, so it is rejected by returning an empty page.
+    /// - `cursor` is a global catalog index — the same domain as `list_page`
+    ///   and `list_listed_page`. It points at the first catalog entry that
+    ///   has not been scanned yet, so a page that matched nothing still
+    ///   advances and a later page cannot repeat an entry.
+    /// - `limit` is the maximum number of resources the page returns. It is
+    ///   clamped to `1..=[`LIST_PAGE_CAP`] (20): a `limit` of `0` still
+    ///   returns one match so the scan always makes progress and a client
+    ///   following the cursor can never be stuck on the same slot.
+    /// - Results are ordered by global registration sequence, so the order is
+    ///   deterministic for a given ledger state and does not depend on the
+    ///   prefix.
+    /// - Tombstoned resources are skipped, matching `list_by_tag`.
+    ///
+    /// The scan walks the global catalog index, so the cost of a call grows
+    /// with the size of the catalog; the returned page stays bounded.
+    pub fn search_by_tag_prefix(env: Env, prefix: String, cursor: u32, limit: u32) -> CatalogPage {
+        let norm_prefix = Self::normalize_tag(&env, &prefix);
+        if norm_prefix.is_empty() {
+            // An empty prefix would match every tag in the catalog.
+            return CatalogPage {
+                items: Vec::new(&env),
+                next_cursor: None,
+            };
+        }
+        let prefix_bytes = Self::string_bytes(&norm_prefix);
+        // Clamp the limit the same way `export_page` does: a page of zero
+        // entries with an unchanged cursor would strand a client that
+        // follows the cursor.
+        let page_size = limit.clamp(1, LIST_PAGE_CAP);
+        Self::scan_catalog(&env, cursor, page_size, |resource| {
+            resource.state != ResourceState::Tombstoned
+                && Self::has_tag_prefix(resource, &prefix_bytes)
+        })
+    }
+
+    /// Does `resource` carry at least one tag that starts with `prefix`?
+    ///
+    /// `prefix_bytes` is the normalized prefix as raw bytes, precomputed once
+    /// by the caller so the comparison stays allocation-light.
+    fn has_tag_prefix(resource: &Resource, prefix_bytes: &[u8]) -> bool {
+        if prefix_bytes.is_empty() {
+            return false;
+        }
+        for i in 0..resource.tags.len() {
+            let tag = resource.tags.get(i).unwrap();
+            let bytes = Self::string_bytes(&tag);
+            if bytes.len() >= prefix_bytes.len() && bytes[..prefix_bytes.len()] == prefix_bytes[..]
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn top_tags(env: Env, limit: u32) -> Vec<TagPopularity> {
         let page_size = limit.min(TOP_TAGS_CAP);
         if page_size == 0 {
@@ -2866,6 +2932,75 @@ impl VaultRegistry {
         Self::id_page(&env, &ids, cursor, limit, |resource| {
             resource.state != ResourceState::Tombstoned
         })
+    }
+
+    /// Paginated listing of the resources owned by `creator`, filtered by
+    /// listing state and lifecycle state.
+    ///
+    /// This is the filtered counterpart of [`list_by_creator_page`]: it walks
+    /// the same creator-scoped index with the same [`IdCursor`] pagination, so
+    /// a creator dashboard reads only its own inventory instead of scanning
+    /// the global catalog, and the two calls can be interleaved.
+    ///
+    /// - `cursor` is an [`IdCursor`]: `Start` for the first page, then the
+    ///   `next_cursor` returned by the previous call. It survives resources
+    ///   that leave the creator index (tombstones, transfers) exactly as it
+    ///   does for `list_by_creator_page`.
+    /// - `limit` is capped at [`LIST_PAGE_CAP`] (20). A `limit` of `0`
+    ///   returns an empty page.
+    /// - `listed` filters on the creator-facing listing projection:
+    ///   `Some(true)` keeps only resources in the `Listed` state,
+    ///   `Some(false)` keeps only resources that are *not* listed, and
+    ///   `None` keeps every resource.
+    /// - `state` filters on the explicit lifecycle state; `None` keeps every
+    ///   state.
+    /// - The two filters compose with AND: a resource is returned only when
+    ///   it satisfies both. A contradictory pair (`listed = Some(true)` with
+    ///   `state = Some(Delisted)`) therefore yields an empty page rather
+    ///   than an error.
+    /// - `next_cursor` resumes after the last resource the page returned, the
+    ///   same rule `list_by_creator_page` uses. Resources the filters reject
+    ///   are skipped; a page that matches nothing scans the rest of the
+    ///   creator index and ends the iteration with `IdCursor::End`.
+    ///
+    /// Tombstoned resources are removed from the creator's index by
+    /// `tombstone_resource` and are skipped on read, so
+    /// `state = Some(Tombstoned)` always yields an empty page. Use `get` /
+    /// `get_resource_state` to audit a tombstoned resource.
+    pub fn list_by_creator_page_filtered(
+        env: Env,
+        creator: Address,
+        cursor: IdCursor,
+        limit: u32,
+        listed: Option<bool>,
+        state: Option<ResourceState>,
+    ) -> IdPage {
+        let ids = Self::creator_list(&env, &creator);
+        Self::id_page(&env, &ids, cursor, limit, |resource| {
+            resource.state != ResourceState::Tombstoned
+                && Self::matches_creator_filters(resource, listed, state)
+        })
+    }
+
+    /// Apply the creator-page filters to `resource`.
+    ///
+    /// Both filters are independent predicates combined with AND.
+    fn matches_creator_filters(
+        resource: &Resource,
+        listed: Option<bool>,
+        state: Option<ResourceState>,
+    ) -> bool {
+        if let Some(want_listed) = listed {
+            if resource.listed != want_listed {
+                return false;
+            }
+        }
+        if let Some(want_state) = state {
+            if resource.state != want_state {
+                return false;
+            }
+        }
+        true
     }
 
     /// `list_by_tag` with an id-based cursor (see `list_by_creator_page`).
@@ -6459,10 +6594,11 @@ impl VaultRegistry {
             }
             normalized.push(b);
         }
-        match core::str::from_utf8(&normalized) {
-            Ok(s) => String::from_str(env, s),
-            Err(_) => String::from_bytes(env, &normalized),
-        }
+        // The host validates UTF-8 when the bytes are handed to it
+        // (`string_new_from_slice`), so the normalized bytes can be passed
+        // straight through: trimming ASCII whitespace and lowercasing ASCII
+        // letters cannot invalidate the original UTF-8.
+        String::from_bytes(env, &normalized)
     }
 
     fn load_top_tags(env: &Env) -> Vec<TagPopularity> {

@@ -51,8 +51,10 @@ import {
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
   REGISTRY_COUNT_OUTPUT_SCHEMA,
+  REGISTRY_CREATOR_PAGE_OUTPUT_SCHEMA,
   REGISTRY_INFO_OUTPUT_SCHEMA,
   REGISTRY_LIST_OUTPUT_SCHEMA,
+  REGISTRY_TAG_SEARCH_OUTPUT_SCHEMA,
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
   SERVER_ENDPOINTS_OUTPUT_SCHEMA,
@@ -948,6 +950,96 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: REGISTRY_LIST_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Registry List",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_registry_creator_page",
+    description:
+      "List one creator's on-chain resources with pagination and optional filters (contract list_by_creator_page_filtered). Returns compact summaries directly from Stellar, not the MindVault API catalog. Filter by listed state, lifecycle state, or both; the filters combine with AND, so a contradictory pair returns an empty page instead of an error. Pass the returned nextCursor back to fetch the next page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creator: {
+          type: "string",
+          description:
+            "Stellar public key (G…) whose resources to list. The page covers this creator's inventory only.",
+          examples: ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"],
+        },
+        cursor: {
+          type: "string",
+          description: "Opaque cursor from a previous page's nextCursor. Omit for the first page.",
+          examples: ["eyJ2IjoxLCJ0IjoiYSJ9"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Page size (1–20, default 20). The contract caps higher values at 20.",
+          examples: [20, 10],
+        },
+        listed: {
+          type: "boolean",
+          description:
+            "Filter on the listing projection: true keeps only listed resources, false keeps only unlisted ones. Omit to keep every resource.",
+          examples: [true, false],
+        },
+        state: {
+          type: "string",
+          enum: ["Listed", "Delisted", "Frozen", "Disputed", "Tombstoned"],
+          description:
+            "Filter on the lifecycle state. Omit to keep every state. Tombstoned resources are never returned, so that filter always yields an empty page.",
+          examples: ["Listed", "Frozen"],
+        },
+      },
+      required: ["creator"],
+    },
+    outputSchema: REGISTRY_CREATOR_PAGE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Creator Page",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_registry_tag_search",
+    description:
+      "Find on-chain resources whose tag starts with a prefix (contract search_by_tag_prefix). The prefix is normalized like a tag (trimmed, lowercased), so ' DATA ' matches 'data'. Returns a bounded page of compact summaries from Stellar, ordered by registration sequence; pass the returned nextCursor back to scan further. An empty prefix matches every tag and therefore returns nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prefix: {
+          type: "string",
+          minLength: 1,
+          maxLength: 32,
+          description:
+            "Tag prefix to match, e.g. 'dat' finds 'dataset' and 'data'. Normalized like a tag before matching.",
+          examples: ["dat", "science", "ml-"],
+        },
+        cursor: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Catalog index to resume from, as returned by a previous page's nextCursor. Omit for the first page.",
+          examples: [0, 20],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description:
+            "Maximum number of resources to return (1–20, default 20). The contract clamps higher values at 20 and always returns at least one match so the scan keeps making progress.",
+          examples: [20, 10],
+        },
+      },
+      required: ["prefix"],
+    },
+    outputSchema: REGISTRY_TAG_SEARCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Tag Search",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

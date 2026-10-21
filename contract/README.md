@@ -269,7 +269,9 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `list_page(cursor, limit)`                                                   | —                                                        | `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                                         | `CatalogPage`                          | Paginated page with `items` + `next_cursor`.                                                                                                                                                                                                                                                             |
 | `list_listed_page(cursor, limit)` | — | `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `CatalogPage` | Cursor page of listed-only resources. |
 | `list_by_dispute_status_page(flagged, cursor, limit)` | — | `flagged: bool`; `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `CatalogPage` | Cursor page filtered by dispute-flag state. |
+| `list_by_creator_page_filtered(creator, cursor, limit, listed, state)` | — | `creator: Address`; `cursor: IdCursor`; `limit: u32` — capped at `LIST_PAGE_CAP` (20); `listed: Option<bool>`; `state: Option<ResourceState>` | `IdPage` | Id-cursor page of a creator's resources, filtered by listed state and lifecycle state. |
 | `list_by_creator_page(creator, cursor, limit)` | — | `creator: Address`; `cursor: IdCursor`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `IdPage` | Id-cursor page of a creator's resources. |
+| `search_by_tag_prefix(prefix, cursor, limit)` | — | `prefix: String` — normalized like a tag; `cursor: u32`; `limit: u32` — clamped to `1..=LIST_PAGE_CAP` (20) | `CatalogPage` | Bounded search for the resources carrying a tag with the given prefix. |
 | `list_by_tag_page(tag, cursor, limit)` | — | `tag: String`; `cursor: IdCursor`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `IdPage` | Id-cursor page of resources carrying `tag`. |
 | `list_listed(start, limit)`                                                  | —                                                        | `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                                          | `Vec<Resource>`                        | Paginated list of listed-only resources. Delisted resources are skipped; relisted resources reappear.                                                                                                                                                                                                    |
 | `list_by_creator(creator, start, limit)`                                     | —                                                        | `creator: Address`; `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                      | `Vec<Resource>`                        | Paginated list of resources currently owned by `creator`, in registration order.                                                                                                                                                                                                                         |
@@ -897,14 +899,63 @@ repeat an entry. The `*_page` variants fix the cursor domain instead:
 
 | Listing                                       | Cursor                    | Why it is stable                                                                                                                                                                                |
 | --------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list_page`, `list_listed_page`, `list_by_dispute_status_page`, `list_by_verification_status` | catalog index (`u32`)     | `Index(i)` slots are append-only and never renumbered, so `next_cursor` names a slot, not a count of matches. Each slot is visited once; its state at that moment decides whether it is returned. |
-| `list_by_creator_page`, `list_by_tag_page`    | `IdCursor` (id-based)     | The backing vectors shift when an entry is removed. The cursor records the last id returned; resuming re-finds it (or, if it was removed too, the first entry registered after it).              |
+| `list_page`, `list_listed_page`, `list_by_dispute_status_page`, `list_by_verification_status`, `search_by_tag_prefix` | catalog index (`u32`)     | `Index(i)` slots are append-only and never renumbered, so `next_cursor` names a slot, not a count of matches. Each slot is visited once; its state at that moment decides whether it is returned. |
+| `list_by_creator_page`, `list_by_creator_page_filtered`, `list_by_tag_page` | `IdCursor` (id-based)     | The backing vectors shift when an entry is removed. The cursor records the last id returned; resuming re-finds it (or, if it was removed too, the first entry registered after it).              |
 
 A flag that flips between two `list_by_dispute_status_page` calls therefore
 lands the resource in at most one of them: the page whose scan reached its
 slot while the flag matched. The unpaged functions keep their signatures for
 existing callers; document their `start` as a catalog index, never as a match
 count.
+
+### Creator-scoped listing with filters
+
+`list_by_creator_page_filtered(creator, cursor, limit, listed, state)` is the
+filtered counterpart of `list_by_creator_page`: it walks the same
+creator-scoped index with the same `IdCursor` pagination, so a creator
+dashboard reads only its own inventory instead of scanning the global
+catalog, and the two calls can be interleaved.
+
+- `listed` filters on the creator-facing listing projection. `Some(true)`
+  keeps only resources in the `Listed` state, `Some(false)` keeps only the
+  ones that are *not* listed, `None` keeps every resource.
+- `state` filters on the explicit lifecycle state (`ResourceState`); `None`
+  keeps every state.
+- The two filters compose with **AND**: a resource is returned only when it
+  satisfies both. A contradictory pair (`listed = Some(true)` with
+  `state = Some(Delisted)`) yields an empty page, never an error.
+- `limit` is the maximum number of resources the page returns and is capped at
+  `LIST_PAGE_CAP` (20). A `limit` of `0` returns an empty page.
+- `next_cursor` is an `IdCursor` that resumes after the last resource the
+  page returned — the same rule `list_by_creator_page` uses. Resources the
+  filters reject are skipped; a page that matches nothing scans the rest of
+  the creator index and ends the iteration with `IdCursor::End`.
+- Tombstoned resources are removed from the creator's index by
+  `tombstone_resource` and are skipped on read, so `state = Some(Tombstoned)`
+  always yields an empty page. Use `get` / `get_resource_state` to audit a
+  tombstoned resource.
+
+### Bounded tag-prefix search
+
+`search_by_tag_prefix(prefix, cursor, limit)` is the discovery read for the
+resources that carry a tag sharing a prefix. It complements `list_by_tag`,
+which only resolves one exact tag.
+
+- **Normalization matches the tag rules.** The prefix is normalized with the
+  same rules tags are stored with (trim ASCII whitespace, lowercase ASCII
+  letters), so `"  DATA "` resolves the same way as `"data"`.
+- **An empty prefix is rejected.** A prefix that normalizes to the empty
+  string would match every tag in the catalog, so the call returns an empty
+  page with `next_cursor = None` instead of an unbounded read.
+- **Bounded.** `limit` is the maximum number of resources the page returns and
+  is clamped to `1..=LIST_PAGE_CAP` (20). A `limit` of `0` still returns one
+  match, so the scan always makes progress and a client following the cursor
+  can never be stuck on the same catalog slot.
+- **Deterministic.** `cursor` is a global catalog index — the same domain as
+  `list_page` and `list_listed_page`. Results follow registration order, so
+  the same ledger state always yields the same sequence, and the cursor names
+  a catalog slot rather than a count of matches.
+- **Tombstoned resources are skipped**, matching `list_by_tag`.
 
 ### Registry export pages
 

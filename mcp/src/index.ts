@@ -10,7 +10,10 @@ import {
   getAttestationHash,
   Errors as RegistryErrors,
   listResources,
+  type CatalogPage,
+  type IdPage,
   type Resource,
+  type ResourceState,
 } from "@mindvault/registry-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -83,8 +86,10 @@ import {
   createMockFetch,
   mockEnabledFromEnv,
   mockRegistryCount,
+  mockRegistryCreatorPage,
   mockRegistryLookup,
   mockRegistryList,
+  mockRegistryTagSearch,
   mockUpdateMetadata,
   mockSetPrice,
   mockTransferOwnership,
@@ -110,7 +115,13 @@ import { correlationHeaders } from "./correlation.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
 import {
+  assertToolTimeoutOverridesWithinDeadline,
+  resolveTransportTimeoutMax,
+} from "./toolTimeoutOverrides.js";
+import { decodeIdCursor, encodeIdCursor, type IdCursor } from "./registryIdCursor.js";
+import {
   flag,
+  optionalFlag,
   optionalInt,
   optionalString,
   requiredString,
@@ -203,12 +214,7 @@ import {
   withTimeout,
   type TimeoutService,
 } from "./httpTimeout.js";
-import {
-  assertToolTimeoutOverridesWithinDeadline,
-  resolveToolTimeouts,
-  resolveTransportTimeoutMax,
-  timeoutForTool,
-} from "./toolTimeoutOverrides.js";
+import { resolveToolTimeouts, timeoutForTool } from "./toolTimeoutOverrides.js";
 import { describeProxyConfig, resolveProxyConfig, withProxy } from "./proxy.js";
 import {
   describeRetryPolicy,
@@ -3562,6 +3568,174 @@ export async function registryList(start: number, limit: number): Promise<string
   );
 }
 
+/**
+ * Compact summary of an on-chain resource, as the registry read tools return
+ * it. `state` is the contract's lifecycle state, so a caller can tell a
+ * delisted resource from a frozen one without a second lookup.
+ */
+function registryResourceSummary(resource: Resource) {
+  const priceUsdc = stroopsToUsdc(BigInt(resource.price as unknown as bigint));
+  return {
+    id: resource.id,
+    creator: resource.creator,
+    price: `${priceUsdc} USDC`,
+    metadata: resource.metadata,
+    listed: resource.listed,
+    state: resource.state.tag,
+    tags: resource.tags,
+  };
+}
+
+/**
+ * One page of a creator's on-chain resources, filtered by listing and
+ * lifecycle state (contract `list_by_creator_page_filtered`).
+ *
+ * The cursor is an opaque token: the contract's `IdCursor` is encoded and
+ * handed back untouched, so an agent cannot corrupt its own pagination.
+ */
+export async function registryCreatorPage(
+  creator: string,
+  cursorToken: string | undefined,
+  limit: number,
+  listed: boolean | undefined,
+  state: string | undefined,
+): Promise<string> {
+  if (_isMock())
+    return mockRegistryCreatorPage(
+      creator,
+      cursorToken,
+      limit,
+      listed,
+      state,
+      REGISTRY_CONTRACT_ID,
+      currentWallet()?.publicKey,
+    );
+
+  const decoded =
+    cursorToken === undefined
+      ? ({ ok: true, cursor: { tag: "Start", values: undefined } } as const)
+      : decodeIdCursor(cursorToken);
+  if (!decoded.ok) {
+    throw mcpError({
+      source: "soroban",
+      category: "validation",
+      summary: `Creator page rejected: ${decoded.error}`,
+      action:
+        "Call mindvault_registry_creator_page again without a cursor to start from the first page.",
+    });
+  }
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let page: IdPage;
+  try {
+    const tx = await client.list_by_creator_page_filtered({
+      creator,
+      cursor: decoded.cursor as IdCursor,
+      limit,
+      listed,
+      state:
+        state === undefined
+          ? undefined
+          : ({ tag: state, values: undefined } as unknown as ResourceState),
+    });
+    page = tx.result;
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `On-chain creator page failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL}, creator ${creator}, limit ${limit})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  const items = page.items.map(registryResourceSummary);
+  const nextCursor =
+    page.next_cursor.tag === "End" ? null : encodeIdCursor(page.next_cursor as IdCursor);
+
+  return JSON.stringify(
+    {
+      source: "on-chain",
+      creator,
+      count: items.length,
+      resources: items,
+      nextCursor,
+      message:
+        items.length === 0
+          ? `No on-chain resources matched for creator ${creator}. The filters may exclude everything the creator owns; try mindvault_registry_creator_page without a state or listed filter.`
+          : undefined,
+      contract: REGISTRY_CONTRACT_ID,
+      network: REGISTRY_NETWORK_PASSPHRASE,
+      rpc: SOROBAN_RPC_URL,
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Bounded search over the on-chain catalog for resources whose tag starts
+ * with a prefix (contract `search_by_tag_prefix`).
+ *
+ * The cursor is a catalog index, not a match count: it names the slot the
+ * scan resumes at, so a page that matched nothing still advances.
+ */
+export async function registryTagSearch(
+  prefix: string,
+  cursor: number,
+  limit: number,
+): Promise<string> {
+  if (_isMock()) return mockRegistryTagSearch(prefix, cursor, limit, REGISTRY_CONTRACT_ID);
+
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let page: CatalogPage;
+  try {
+    const tx = await client.search_by_tag_prefix({ prefix, cursor, limit });
+    page = tx.result;
+  } catch (err: unknown) {
+    throw mcpError(
+      mapTransportError({
+        operation: `On-chain tag search failed (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL}, prefix ${prefix}, cursor ${cursor}, limit ${limit})`,
+        source: "soroban",
+        error: err,
+      }),
+    );
+  }
+
+  const items = page.items.map(registryResourceSummary);
+
+  return JSON.stringify(
+    {
+      source: "on-chain",
+      prefix,
+      cursor,
+      limit,
+      count: items.length,
+      resources: items,
+      nextCursor: page.next_cursor ?? null,
+      message:
+        items.length === 0
+          ? `No on-chain resources carry a tag starting with "${prefix}". The scan may have passed the matching entries; continue with nextCursor, or use mindvault_registry_list to see the whole catalog.`
+          : undefined,
+      contract: REGISTRY_CONTRACT_ID,
+      network: REGISTRY_NETWORK_PASSPHRASE,
+      rpc: SOROBAN_RPC_URL,
+    },
+    null,
+    2,
+  );
+}
+
 export async function registryCount(creator?: string): Promise<string> {
   if (_isMock()) return mockRegistryCount(creator, REGISTRY_CONTRACT_ID);
 
@@ -4344,6 +4518,20 @@ async function dispatchToolOutcome(
         );
       case "mindvault_registry_count":
         return registryCount(optionalString(args, "creator"));
+      case "mindvault_registry_creator_page":
+        return registryCreatorPage(
+          requiredString(args, "creator"),
+          optionalString(args, "cursor"),
+          optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
+          optionalFlag(args, "listed"),
+          optionalString(args, "state"),
+        );
+      case "mindvault_registry_tag_search":
+        return registryTagSearch(
+          requiredString(args, "prefix"),
+          optionalInt(args, "cursor", REGISTRY_LIST_DEFAULT_START),
+          optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
+        );
       case "mindvault_update_metadata":
         return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
       case "mindvault_set_price":

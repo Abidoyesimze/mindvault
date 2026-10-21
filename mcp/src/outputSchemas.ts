@@ -488,6 +488,40 @@ export const REGISTRY_LIST_OUTPUT_SCHEMA = {
   required: ["source", "start", "limit", "count", "resources", "contract"],
 } as const;
 
+export const REGISTRY_CREATOR_PAGE_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    source: { type: "string" },
+    creator: { type: "string" },
+    count: { type: "integer" },
+    resources: { type: "array" },
+    nextCursor: { type: ["string", "null"] },
+    message: { type: "string" },
+    contract: {},
+    network: {},
+    rpc: {},
+  },
+  required: ["source", "creator", "count", "resources", "nextCursor", "contract"],
+} as const;
+
+export const REGISTRY_TAG_SEARCH_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    source: { type: "string" },
+    prefix: { type: "string" },
+    cursor: { type: "integer" },
+    limit: { type: "integer" },
+    count: { type: "integer" },
+    resources: { type: "array" },
+    nextCursor: { type: ["integer", "null"] },
+    message: { type: "string" },
+    contract: {},
+    network: {},
+    rpc: {},
+  },
+  required: ["source", "prefix", "cursor", "limit", "count", "resources", "nextCursor", "contract"],
+} as const;
+
 export const REGISTRY_COUNT_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
