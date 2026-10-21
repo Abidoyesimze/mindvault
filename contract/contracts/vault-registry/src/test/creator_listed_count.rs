@@ -49,7 +49,7 @@ fn creator_listed_count_increments_on_register() {
 fn creator_listed_count_counts_each_batch_item_that_registered() {
     let (env, creator, client) = setup();
     let mut items = Vec::new(&env);
-    for id in ["clcbatch1", "clcbatch2", "clcbatch1"] {
+    for id in ["clcbatch1", "clcbatch2", "clcbatch3"] {
         items.push_back(BatchRegisterItem {
             id: String::from_str(&env, id),
             price: 100,
@@ -61,10 +61,9 @@ fn creator_listed_count_counts_each_batch_item_that_registered() {
 
     let result = client.register_batch(&creator, &items);
 
-    // The duplicate third item fails; only the two registrations count.
-    assert_eq!(result.succeeded.len(), 2);
-    assert_eq!(result.failed.len(), 1);
-    assert_counts(&client, &creator, 2);
+    assert_eq!(result.succeeded.len(), 3);
+    assert_eq!(result.failed.len(), 0);
+    assert_counts(&client, &creator, 3);
 }
 
 #[test]

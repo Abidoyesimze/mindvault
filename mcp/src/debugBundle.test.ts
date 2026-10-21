@@ -114,6 +114,14 @@ describe("sanitizeEnvironment", () => {
     expect(environment.MINDVAULT_URL).not.toContain(SECRET);
     expect(environment.MINDVAULT_URL).toContain("REDACTED");
   });
+
+  it("keeps the proxy host but strips credentials from a proxy URL (#1075)", () => {
+    const { environment } = sanitizeEnvironment({
+      HTTPS_PROXY: "http://alice:s3cret@proxy.corp:8443",
+    });
+    expect(environment.HTTPS_PROXY).toBe("http://proxy.corp:8443");
+    expect(environment.HTTPS_PROXY).not.toContain("s3cret");
+  });
 });
 
 describe("summarizeProfiles", () => {

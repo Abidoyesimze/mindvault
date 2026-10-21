@@ -23,6 +23,8 @@ accepts, what a rejection looks like, and which values are normalized.
 | Strings                    | Trimmed before use; empty (or whitespace-only) is rejected.                                                                                  |
 | Booleans ("flags")         | Accept `true`/`false`, `1`/`0`, and the strings `true/false`, `yes/no`, `on/off`, `1/0` (case-insensitive). Anything else is rejected.       |
 | Digests                    | Accept the fixed metadata hash format — see [MCP metadata hash format](mcp-metadata-hash.md).                                                |
+| Stellar public keys        | Validated with `StrKey.isValidEd25519PublicKey` before any Horizon or Soroban RPC call. Both the base32 character set **and the CRC-16 checksum** must be valid. A key that looks right but has a bad checksum is rejected locally with `invalid_stellar_address`. |
+| Stellar secret keys        | Validated with `StrKey.isValidEd25519SecretSeed` before any network call. Same checksum check as public keys. Rejected values are **never echoed back** to prevent secret leakage in transcripts. |
 | `attestationHash`          | An opaque verifier-provided string (maximum 64 characters), compared exactly after trimming; it is distinct from the metadata `contentHash`. |
 | On-chain resource ID       | 1–24 lowercase ASCII letters or digits, matching the vault-registry contract.                                                                |
 | Multiple problems          | Reported together in one error, in schema order.                                                                                             |
@@ -50,7 +52,8 @@ Error: Unknown tool: mindvault_by. Available tools: mindvault_agent_status, mind
 
 Each issue carries a stable code (`unknown_argument`, `missing_required`,
 `wrong_type`, `empty_string`, `too_short`, `too_long`, `pattern_mismatch`,
-`not_in_enum`, `invalid_hash`, `invalid_tag_array`, `not_an_object`) for clients
+`not_in_enum`, `invalid_hash`, `invalid_stellar_address`, `invalid_stellar_secret`,
+`invalid_tag_array`, `not_an_object`) for clients
 that want to branch on the failure rather than parse prose.
 
 ---
@@ -86,7 +89,7 @@ that want to branch on the failure rather than parse prose.
 | `mindvault_preview`            | `resourceId`           | yes      | letters, digits, dot, dash, underscore (≤128)             |
 | `mindvault_register`           | `name`                 | yes      | 1–128 characters                                          |
 |                                | `email`                | yes      | email address (≤254)                                      |
-|                                | `walletAddress`        | no       | Stellar public key (`G…`, 56 chars)                       |
+|                                | `walletAddress`        | no       | Stellar public key (`G…`, 56 chars, StrKey-verified)      |
 | `mindvault_publish`            | `title`                | yes      | 1–256 characters                                          |
 |                                | `description`          | no       | ≤2048 characters                                          |
 |                                | `price`                | yes      | decimal USDC string                                       |
@@ -99,7 +102,7 @@ that want to branch on the failure rather than parse prose.
 | `mindvault_set_price`          | `resourceId`           | yes      | resource id                                               |
 |                                | `price`                | yes      | decimal USDC amount (e.g. `"10.00"`)                      |
 | `mindvault_transfer_ownership` | `resourceId`           | yes      | resource id                                               |
-|                                | `newCreator`           | yes      | Stellar public key (`G…`, 56 chars)                       |
+|                                | `newCreator`           | yes      | Stellar public key (`G…`, 56 chars, StrKey-verified)      |
 | `mindvault_set_listed`         | `resourceId`           | yes      | resource id                                               |
 |                                | `listed`               | yes      | boolean (`true`/`false`)                                  |
 | `mindvault_agent_status`       | —                      | —        | takes no arguments                                        |
@@ -132,13 +135,15 @@ server calls.
 Handlers receive normalized values, so a tool behaves identically whichever
 accepted spelling the agent used:
 
-| Argument kind          | Normalization                                                                                                                    |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| string                 | trimmed                                                                                                                          |
-| enum                   | trimmed, compared exactly                                                                                                        |
-| flag                   | coerced to a real boolean                                                                                                        |
-| `txHash`               | lowercased bare hex                                                                                                              |
-| `expectedMetadataHash` | canonical `sha256:<hex>` form                                                                                                    |
+| Argument kind          | Normalization                 |
+| ---------------------- | ----------------------------- |
+| string                 | trimmed                       |
+| enum                   | trimmed, compared exactly     |
+| flag                   | coerced to a real boolean     |
+| stellar_address        | trimmed; rejected unless `StrKey.isValidEd25519PublicKey` passes (checksum verified) |
+| stellar_secret         | trimmed; rejected unless `StrKey.isValidEd25519SecretSeed` passes (checksum verified); value never echoed in errors |
+| `txHash`               | lowercased bare hex           |
+| `expectedMetadataHash` | canonical `sha256:<hex>` form |
 | string_array           | per-entry trimmed, empties dropped; case and duplicates kept (unlike `tag_array`, entries are data selectors, not on-chain tags) |
 
 ---

@@ -166,7 +166,12 @@ export function createMockFetch(
     if (method === "GET" && pathname.startsWith("/accounts/")) {
       return json({
         balances: [
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "1000.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "1000.0000000",
+          },
           { asset_type: "native", balance: "100.0000000" },
         ],
       });

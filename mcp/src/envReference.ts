@@ -134,6 +134,36 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     default: `${DEFAULT_MAX_ATTEMPTS} (unlimited)`,
     source: "mcp/src/rpcFailover.ts",
   },
+  {
+    name: "MINDVAULT_URL_ALLOWLIST",
+    description:
+      "Comma-separated hosts that skip the outbound-URL local/reserved-address guard used by publish and metadata flows (#1078). An entry may be a host, a leading-dot domain, or an IP literal; the http(s) scheme is still enforced. Leave unset in production so loopback, link-local, and private addresses stay rejected.",
+    default: "unset — every private, loopback, and link-local address is rejected",
+    source: "mcp/src/outboundUrl.ts",
+  },
+
+  // ── Proxy ──────────────────────────────────────────────────────────────────
+  {
+    name: "HTTP_PROXY",
+    description:
+      "Standard proxy URL for `http:` requests. Also accepted lowercase (http_proxy). Credentials in the URL are redacted from logs and diagnostics. Unset means direct connection.",
+    default: "unset — direct connection",
+    source: "mcp/src/proxy.ts",
+  },
+  {
+    name: "HTTPS_PROXY",
+    description:
+      "Standard proxy URL for `https:` requests. Also accepted lowercase (https_proxy). Credentials in the URL are redacted from logs and diagnostics. Unset means direct connection.",
+    default: "unset — direct connection",
+    source: "mcp/src/proxy.ts",
+  },
+  {
+    name: "NO_PROXY",
+    description:
+      "Comma-separated hosts that bypass the proxy, matching the conventional semantics: `*` bypasses everything, a leading dot matches a domain suffix, and `host:port` requires the port to match. Also accepted lowercase (no_proxy).",
+    default: "unset — no host bypasses the proxy",
+    source: "mcp/src/proxy.ts",
+  },
 
   // ── Guardrails & policies ──────────────────────────────────────────────────
   {
@@ -242,6 +272,13 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     description:
       "Per-tool timeout overrides as a comma/space-separated list of tool=milliseconds entries. The mindvault_ prefix is optional; 0 removes the deadline for that tool.",
     default: "unset — every tool uses its service budget",
+    source: "mcp/src/toolTimeoutOverrides.ts",
+  },
+  {
+    name: "MINDVAULT_TRANSPORT_TIMEOUT_MAX_MS",
+    description:
+      "Maximum allowed value for any per-tool timeout override. Overrides exceeding this effective request deadline fail at startup. 0 disables the cap.",
+    default: "300000",
     source: "mcp/src/toolTimeoutOverrides.ts",
   },
   {

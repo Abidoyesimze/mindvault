@@ -2240,6 +2240,14 @@ exports[`tool schema snapshots > mindvault_export_receipts > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = `
 {
   "properties": {
+    "fields": {
+      "description": "Comma-separated subset of row fields to include, in order. Defaults to every field except sensitive ones. Known fields: resourceId, title, amount, currency, network, purchasedAt, txHash, receiptRef, explorerUrl, profile. Selecting a sensitive field (profile) is an explicit opt-in.",
+      "examples": [
+        "resourceId,amount,purchasedAt",
+        "resourceId,txHash,explorerUrl",
+      ],
+      "type": "string",
+    },
     "format": {
       "description": "Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope's csv field; "ndjson" renders each row as a JSON object on its own line in the envelope's ndjson field.",
       "enum": [
@@ -2264,6 +2272,14 @@ exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = 
       ],
       "type": "string",
     },
+    "includeSensitive": {
+      "description": "When true, keep sensitive fields (profile) in the default field set. Has no effect when fields is given.",
+      "examples": [
+        false,
+        true,
+      ],
+      "type": "boolean",
+    },
     "limit": {
       "description": "Max receipts to export, newest first (1–500).",
       "examples": [
@@ -2281,6 +2297,15 @@ exports[`tool schema snapshots > mindvault_export_receipts > input schema 1`] = 
         "stellar:pubnet",
       ],
       "type": "string",
+    },
+    "offset": {
+      "description": "Rows to skip from the newest receipt, for resumable paging. The envelope's nextOffset is the value to pass here on the next call.",
+      "examples": [
+        0,
+        500,
+      ],
+      "minimum": 0,
+      "type": "integer",
     },
     "resourceId": {
       "description": "Export only receipts for this resource id.",
@@ -2318,7 +2343,7 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
     {
       "properties": {
         "count": {
-          "description": "Number of exported receipts.",
+          "description": "Number of receipts on this page.",
           "type": "integer",
         },
         "csv": {
@@ -2328,6 +2353,25 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
         "currency": {
           "const": "USDC",
           "type": "string",
+        },
+        "fields": {
+          "description": "Row fields carried by this export, in selection order.",
+          "items": {
+            "enum": [
+              "resourceId",
+              "title",
+              "amount",
+              "currency",
+              "network",
+              "purchasedAt",
+              "txHash",
+              "receiptRef",
+              "explorerUrl",
+              "profile",
+            ],
+            "type": "string",
+          },
+          "type": "array",
         },
         "filters": {
           "description": "The filters this export was produced with; null where unset.",
@@ -2351,6 +2395,12 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
             "network": {
               "type": [
                 "string",
+                "null",
+              ],
+            },
+            "offset": {
+              "type": [
+                "integer",
                 "null",
               ],
             },
@@ -2379,6 +2429,7 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
             "since",
             "until",
             "limit",
+            "offset",
             "groupBy",
           ],
           "type": "object",
@@ -2428,7 +2479,15 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
           "description": "Newline-Delimited JSON document of the same rows. Present only when format is "ndjson".",
           "type": "string",
         },
+        "nextOffset": {
+          "description": "Offset to pass on the next call to resume, or null when this is the last page.",
+          "type": [
+            "integer",
+            "null",
+          ],
+        },
         "receipts": {
+          "description": "One object per receipt, carrying only the selected fields (every field except sensitive ones by default).",
           "items": {
             "properties": {
               "amount": {
@@ -2446,6 +2505,13 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
               },
               "network": {
                 "type": "string",
+              },
+              "profile": {
+                "description": "Local wallet profile the purchase was made under. Sensitive — present only when selected.",
+                "type": [
+                  "string",
+                  "null",
+                ],
               },
               "purchasedAt": {
                 "type": "string",
@@ -2472,17 +2538,6 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
                 ],
               },
             },
-            "required": [
-              "resourceId",
-              "title",
-              "amount",
-              "currency",
-              "network",
-              "purchasedAt",
-              "txHash",
-              "receiptRef",
-              "explorerUrl",
-            ],
             "type": "object",
           },
           "type": "array",
@@ -2495,13 +2550,20 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
           "description": "Sum of the exported amounts as a decimal string.",
           "type": "string",
         },
+        "totalMatching": {
+          "description": "Rows matching the filters before pagination; larger than count on a partial page.",
+          "type": "integer",
+        },
       },
       "required": [
         "schema",
         "generatedAt",
         "format",
         "filters",
+        "fields",
         "count",
+        "totalMatching",
+        "nextOffset",
         "totalAmount",
         "currency",
         "receipts",
@@ -3030,16 +3092,15 @@ exports[`tool schema snapshots > mindvault_import_wallet > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_import_wallet > input schema 1`] = `
 {
   "properties": {
-    "confirmMainnet": {
-      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
-      "type": "boolean",
-    },
-    "persist": {
-      "description": "When true (default), save the imported wallet to the state file. When false, validate only and return the public key without writing to disk.",
+    "confirm": {
+      "description": "Must be true to persist the wallet. Without it the tool derives and displays the address but writes nothing, so the agent can verify the address before committing.",
       "examples": [
         true,
-        false,
       ],
+      "type": "boolean",
+    },
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
     },
     "profile": {
@@ -3450,6 +3511,174 @@ exports[`tool schema snapshots > mindvault_mainnet_banner > input schema 1`] = `
 `;
 
 exports[`tool schema snapshots > mindvault_mainnet_banner > output schema 1`] = `null`;
+
+exports[`tool schema snapshots > mindvault_metadata_diff > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Metadata Diff",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_metadata_diff > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "The resource ID to compare between the API catalog and the on-chain vault-registry.",
+      "examples": [
+        "swcn98besxpp6t1u8e77fqz3",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_metadata_diff > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "apiFound": {
+          "type": "boolean",
+        },
+        "apiSource": {
+          "type": "string",
+        },
+        "discrepancyCount": {
+          "type": "integer",
+        },
+        "fields": {
+          "items": {
+            "properties": {
+              "api": {},
+              "field": {
+                "type": "string",
+              },
+              "onchain": {},
+              "status": {
+                "enum": [
+                  "match",
+                  "mismatch",
+                  "missing_api",
+                  "missing_onchain",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "field",
+              "status",
+              "api",
+              "onchain",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "network": {
+          "type": "string",
+        },
+        "onchainError": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "onchainFound": {
+          "type": "boolean",
+        },
+        "onchainSource": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "rpc": {
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+        "x402Network": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "resourceId",
+        "apiFound",
+        "onchainFound",
+        "onchainError",
+        "fields",
+        "discrepancyCount",
+        "summary",
+        "apiSource",
+        "onchainSource",
+        "network",
+        "x402Network",
+        "rpc",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_metrics > annotations 1`] = `
 {
@@ -8051,6 +8280,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_lease_status",
   "mindvault_list_profiles",
   "mindvault_mainnet_banner",
+  "mindvault_metadata_diff",
   "mindvault_metrics",
   "mindvault_network_profile",
   "mindvault_pending_transfer",

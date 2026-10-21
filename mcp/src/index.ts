@@ -160,6 +160,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
+import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
   exportStateFile,
@@ -181,7 +182,11 @@ import {
   type TransactionLookup,
 } from "./settlement.js";
 import { publisherTerms } from "./tools/state.js";
-import { batchCatalogLookupOutcome, previewMetadataHashOutcome } from "./tools/registry.js";
+import {
+  batchCatalogLookupOutcome,
+  metadataDiff,
+  previewMetadataHashOutcome,
+} from "./tools/registry.js";
 import { mockVerifyAttestation } from "./mock.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
 import { verifyInstall, formatVerifyInstall } from "./verifyInstall.js";
@@ -194,6 +199,7 @@ import {
   type TimeoutService,
 } from "./httpTimeout.js";
 import { resolveToolTimeouts, timeoutForTool } from "./toolTimeoutOverrides.js";
+import { describeProxyConfig, resolveProxyConfig, withProxy } from "./proxy.js";
 import {
   describeRetryPolicy,
   formatRetryLog,
@@ -250,7 +256,9 @@ import {
   getPreviewSnapshot,
   recordCatalogSnapshot,
   recordPreviewSnapshot,
+  type CatalogCacheContext,
 } from "./catalogCache.js";
+import { createCatalogCursor, resolveCatalogCursor } from "./catalogCursor.js";
 import { publishBatch, type BatchPublishItem } from "./tools/publish.js";
 import { buyLease, leaseStatus } from "./tools/leases.js";
 
@@ -271,6 +279,19 @@ const SPONSORED_ACCOUNT_URL = initialConfig.sponsoredAccountUrl;
 let HORIZON_URL = initialConfig.horizonUrl;
 let SOROBAN_RPC_URL = initialConfig.sorobanRpcUrl;
 const PLATFORM_WALLET_ADDRESS = initialConfig.platformWalletAddress;
+
+function catalogCacheContext(): CatalogCacheContext {
+  return {
+    profile: activeProfileName,
+    network: STELLAR_NETWORK,
+    contractId: REGISTRY_CONTRACT_ID,
+    apiOrigin: new URL(BASE_URL).origin,
+  };
+}
+
+function catalogCacheKey(url: string): string {
+  return url;
+}
 
 function applyNetworkConfig(network: "testnet" | "mainnet"): void {
   process.env.STELLAR_NETWORK = network;
@@ -311,12 +332,15 @@ export function _setMockMode(on: boolean): void {
   if (on) process.env.MINDVAULT_MOCK = "1";
   else delete process.env.MINDVAULT_MOCK;
 }
+const PROXY_CONFIG = resolveProxyConfig(process.env);
 const httpFetch: typeof fetch = MOCK
   ? createMockFetch(() => currentWallet()?.publicKey)
-  : (input, init) => fetch(input as RequestInfo | URL, init);
+  : withProxy((input, init) => fetch(input as RequestInfo | URL, init), PROXY_CONFIG);
 
 const TIMEOUTS = resolveTimeouts(process.env);
-const TOOL_TIMEOUTS = resolveToolTimeouts(process.env).overrides;
+const toolTimeoutsResult = resolveToolTimeouts(process.env);
+const TOOL_TIMEOUTS = toolTimeoutsResult.overrides;
+assertToolTimeoutOverridesWithinDeadline(TOOL_TIMEOUTS, resolveTransportTimeoutMax(process.env));
 
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
 
@@ -665,7 +689,7 @@ export async function prewarmCatalogCache(): Promise<string> {
   try {
     await browseOutcome({});
     const elapsedMs = Date.now() - startedAt;
-    const snapshot = getCatalogSnapshot();
+    const snapshot = getCatalogSnapshot(Date.now(), "catalog", catalogCacheContext());
     const count = snapshot && Array.isArray(snapshot.resources) ? snapshot.resources.length : 0;
     return `Catalog pre-warmed: ${count} resource(s) cached in ${elapsedMs}ms.`;
   } catch (err) {
@@ -708,13 +732,19 @@ async function assertApiReachableFor(toolName: string): Promise<void> {
   });
 }
 
+/** Whether an importWallet call carries explicit confirmation (same vocabulary as the reset guard). */
+function isImportConfirmed(value: unknown): boolean {
+  if (value === true || value === 1) return true;
+  if (typeof value !== "string") return false;
+  return ["true", "1", "yes"].includes(value.trim().toLowerCase());
+}
+
 async function importWallet(args: {
   secretKey?: string;
   profile?: string;
-  persist?: boolean;
+  confirm?: unknown;
 }): Promise<ToolOutcome> {
   const target = resolveProfileName(args.profile);
-  const persist = args.persist !== false;
 
   let secretKey = args.secretKey;
   if (!secretKey) {
@@ -739,29 +769,36 @@ async function importWallet(args: {
     throw new Error(`Failed to derive public key: ${safeErrorMessage(err)}`);
   }
 
-  if (persist) {
-    activeProfileName = target;
-    activeProfile().wallet = { publicKey, secretKey };
-    bindActiveProfileToNetwork();
-    saveState();
+  const confirmed = isImportConfirmed(args.confirm);
+
+  if (!confirmed) {
     return {
       text: [
-        `Wallet imported.`,
-        `Profile: ${target}`,
-        `Address: ${publicKey}`,
-        `Wallet persisted to ${STATE_FILE} (mode 0600).`,
+        `Wallet NOT imported — confirmation required.`,
+        `Derived address: ${publicKey}`,
+        `Target profile:  ${target}`,
+        `Network:         ${NETWORK} (${STELLAR_NETWORK})`,
+        ``,
+        `Verify the address above belongs to the intended wallet.`,
+        `To save it, call mindvault_import_wallet again with confirm: true.`,
       ].join("\n"),
-      structured: { profile: target, address: publicKey, persisted: true },
+      structured: { profile: target, address: publicKey, persisted: false },
     };
   }
 
+  activeProfileName = target;
+  activeProfile().wallet = { publicKey, secretKey };
+  bindActiveProfileToNetwork();
+  saveState();
   return {
     text: [
-      `Wallet validated (not persisted).`,
+      `Wallet imported.`,
+      `Profile: ${target}`,
       `Address: ${publicKey}`,
-      `Pass persist: true to save to the state file.`,
+      `Network: ${NETWORK} (${STELLAR_NETWORK})`,
+      `Wallet persisted to ${STATE_FILE} (mode 0600).`,
     ].join("\n"),
-    structured: { profile: target, address: publicKey, persisted: false },
+    structured: { profile: target, address: publicKey, persisted: true },
   };
 }
 
@@ -1023,9 +1060,7 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
   const reserve = baseReserve + subentryCount * entryReserve;
   const available = Math.max(0, parseFloat(xlm) - reserve);
 
-  const usdcBalance = balances.find(
-    (b: any) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC",
-  );
+  const usdcBalance = findCanonicalUsdc(balances, networkPreset.usdcClassicIssuer);
 
   if (!usdcBalance) {
     return {
@@ -1103,7 +1138,7 @@ async function getAccountBalances(
   if (!res.ok) return { usdc: "0", native: "0", funded: false };
   const data: any = await res.json();
   const balances: any[] = data.balances ?? [];
-  const usdc = balances.find((b) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC");
+  const usdc = findCanonicalUsdc(balances, networkPreset.usdcClassicIssuer);
   const native = balances.find((b) => b.asset_type === "native");
   return { usdc: usdc?.balance ?? "0", native: native?.balance ?? "0", funded: true };
 }
@@ -1134,7 +1169,12 @@ function catalogItemStructured(r: any): {
   };
 }
 
-function catalogOutcome(items: any[], body: string, notice: string | null): ToolOutcome {
+function catalogOutcome(
+  items: any[],
+  body: string,
+  notice: string | null,
+  options: { cacheStatus?: "live" | "bypassed" | "offline"; nextCursor?: string | null } = {},
+): ToolOutcome {
   const full = notice ? `${body}\n\n${notice}` : body;
   const text = truncateResponse(full);
   return {
@@ -1142,6 +1182,8 @@ function catalogOutcome(items: any[], body: string, notice: string | null): Tool
     structured: {
       items: items.map(catalogItemStructured),
       notice,
+      cacheStatus: options.cacheStatus ?? (notice ? "offline" : "live"),
+      nextCursor: options.nextCursor ?? null,
       truncated: text !== full,
     },
   };
@@ -1380,7 +1422,16 @@ async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
 async function repairSponsoredAccount(secretKey: string, profileArg?: string): Promise<string> {
   const target = resolveProfileName(profileArg);
   const { Keypair } = await import("@stellar/stellar-sdk");
-  const publicKey = Keypair.fromSecret(secretKey).publicKey();
+  let publicKey: string;
+  try {
+    publicKey = Keypair.fromSecret(secretKey).publicKey();
+  } catch (err) {
+    // Never echo the secret key in error messages — describe the shape problem instead.
+    throw new Error(
+      `Invalid Stellar secret key: could not derive public key. ` +
+        `Expected S followed by 55 base32 characters (${safeErrorMessage(err)}).`,
+    );
+  }
   const details = await getBalanceDetails(publicKey);
 
   if (details.status === "missing") {
@@ -1868,10 +1919,14 @@ function catalogFallbackFor(err: unknown): CatalogFallbackReason | null {
 }
 
 /** Resolve a failed catalog read to a snapshot, or rethrow when it must surface. */
-function catalogSnapshotFor(err: unknown): { resources: unknown[]; notice: string } | null {
+function catalogSnapshotFor(
+  err: unknown,
+  key = "catalog",
+  context = catalogCacheContext(),
+): { resources: unknown[]; notice: string } | null {
   const reason = catalogFallbackFor(err);
   if (!reason) return null;
-  const snapshot = getCatalogSnapshot();
+  const snapshot = getCatalogSnapshot(Date.now(), key, context);
   if (!snapshot) return null;
   return {
     resources: snapshot.resources,
@@ -1880,10 +1935,19 @@ function catalogSnapshotFor(err: unknown): { resources: unknown[]; notice: strin
 }
 
 async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome> {
-  const qs = buildCatalogQueryString(filters);
+  const context = catalogCacheContext();
+  const cursorResult = filters.cursor
+    ? resolveCatalogCursor(filters.cursor, filters, context)
+    : { ok: true as const, offset: filters.offset };
+  if (!cursorResult.ok) return catalogOutcome([], cursorResult.error, null);
+  const requestFilters =
+    cursorResult.offset === undefined ? filters : { ...filters, offset: cursorResult.offset };
+  const qs = buildCatalogQueryString(requestFilters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
   let raw: any[] = [];
   let notice: string | null = null;
+  let nextOffset: number | null = null;
+  let fromCache = false;
   try {
     const res = await jsonFetch(url);
     if (!res.ok) {
@@ -1897,13 +1961,29 @@ async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome>
       );
     }
     raw = Array.isArray(res.data) ? res.data : [];
-    recordCatalogSnapshot(raw);
+    recordCatalogSnapshot(raw, catalogCacheKey(url), context);
     notice = cacheStalenessNotice(res.headers);
+    const header = res.headers["x-next-offset"];
+    nextOffset = header === undefined ? null : Number(header);
   } catch (err) {
-    const fallback = catalogSnapshotFor(err);
+    const fallback = filters.bypassCache
+      ? null
+      : (() => {
+          const reason = catalogFallbackFor(err);
+          const snapshot = reason
+            ? getCatalogSnapshot(Date.now(), catalogCacheKey(url), context)
+            : null;
+          return snapshot && reason
+            ? {
+                resources: snapshot.resources,
+                notice: catalogCacheLabel(snapshot.savedAtMs, Date.now(), reason),
+              }
+            : null;
+        })();
     if (!fallback) throw err;
     raw = Array.isArray(fallback.resources) ? (fallback.resources as any[]) : [];
     notice = fallback.notice;
+    fromCache = true;
   }
   const items: any[] = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
@@ -1919,7 +1999,14 @@ async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome>
         ? `No resources match ${describeCatalogFilters(filters)}.`
         : "No resources listed yet."
       : items.map(formatResource).join("\n\n");
-  return catalogOutcome(items, body, notice);
+  const nextCursor =
+    nextOffset !== null && Number.isInteger(nextOffset)
+      ? createCatalogCursor(nextOffset, filters, context)
+      : null;
+  return catalogOutcome(items, body, notice, {
+    cacheStatus: fromCache ? "offline" : filters.bypassCache ? "bypassed" : "live",
+    nextCursor,
+  });
 }
 
 export async function browse(filters: CatalogFilters = {}): Promise<string> {
@@ -1941,7 +2028,8 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
     filters.limit !== undefined ||
     filters.offset !== undefined ||
     (filters.tags && filters.tags.length > 0) ||
-    filters.listed !== undefined,
+    filters.listed !== undefined ||
+    filters.cursor,
   );
   if (!hasCriteria) {
     return catalogOutcome([], "Provide a search query or at least one catalog filter.", null);
@@ -1951,8 +2039,19 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
   let raw: any[] = [];
   let notice: string | null = null;
+  let nextOffset: number | null = null;
+  let fromCache = false;
+  const context = catalogCacheContext();
+  const cursorResult = filters.cursor
+    ? resolveCatalogCursor(filters.cursor, filters, context)
+    : { ok: true as const, offset: filters.offset };
+  if (!cursorResult.ok) return catalogOutcome([], cursorResult.error, null);
+  const requestFilters =
+    cursorResult.offset === undefined ? filters : { ...filters, offset: cursorResult.offset };
+  const requestQs = buildCatalogQueryString(requestFilters);
+  const requestUrl = requestQs ? `${BASE_URL}/resources?${requestQs}` : `${BASE_URL}/resources`;
   try {
-    const res = await jsonFetch(url);
+    const res = await jsonFetch(requestUrl);
     if (!res.ok) {
       throw mcpError(
         mapHttpError({
@@ -1964,13 +2063,18 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
       );
     }
     raw = Array.isArray(res.data) ? res.data : [];
-    recordCatalogSnapshot(raw);
+    recordCatalogSnapshot(raw, catalogCacheKey(requestUrl), context);
     notice = cacheStalenessNotice(res.headers);
+    const header = res.headers["x-next-offset"];
+    nextOffset = header === undefined ? null : Number(header);
   } catch (err) {
-    const fallback = catalogSnapshotFor(err);
+    const fallback = filters.bypassCache
+      ? null
+      : catalogSnapshotFor(err, catalogCacheKey(requestUrl), context);
     if (!fallback) throw err;
     raw = Array.isArray(fallback.resources) ? (fallback.resources as any[]) : [];
     notice = fallback.notice;
+    fromCache = true;
   }
 
   // Client-side keyword / tags / listed / skipped for unit-test compatibility
@@ -1978,9 +2082,21 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
   const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
 
   if (items.length === 0) {
-    return catalogOutcome([], `No resources match ${describeCatalogFilters(filters)}.`, notice);
+    return catalogOutcome([], `No resources match ${describeCatalogFilters(filters)}.`, notice, {
+      cacheStatus: fromCache ? "offline" : filters.bypassCache ? "bypassed" : "live",
+      nextCursor:
+        nextOffset !== null && Number.isInteger(nextOffset)
+          ? createCatalogCursor(nextOffset, filters, context)
+          : null,
+    });
   }
-  return catalogOutcome(items, items.map(formatResource).join("\n\n"), notice);
+  return catalogOutcome(items, items.map(formatResource).join("\n\n"), notice, {
+    cacheStatus: fromCache ? "offline" : filters.bypassCache ? "bypassed" : "live",
+    nextCursor:
+      nextOffset !== null && Number.isInteger(nextOffset)
+        ? createCatalogCursor(nextOffset, filters, context)
+        : null,
+  });
 }
 
 export async function search(filtersOrQuery: string | CatalogFilters): Promise<string> {
@@ -1993,7 +2109,10 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
  * reachable-but-error response is surfaced verbatim — the cache only covers the
  * unreachable case.
  */
-async function previewData(resourceId: string): Promise<{ r: any; label: string | null }> {
+async function previewData(
+  resourceId: string,
+  bypassCache = false,
+): Promise<{ r: any; label: string | null; cacheStatus: "live" | "bypassed" | "offline" }> {
   try {
     const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
     if (!res.ok)
@@ -2003,20 +2122,24 @@ async function previewData(resourceId: string): Promise<{ r: any; label: string 
         status: res.status,
         data: res.data,
       });
-    recordPreviewSnapshot(resourceId, res.data);
-    return { r: res.data, label: null };
+    recordPreviewSnapshot(resourceId, res.data, catalogCacheContext());
+    return { r: res.data, label: null, cacheStatus: bypassCache ? "bypassed" : "live" };
   } catch (err) {
     // Same rule as browse/search: a snapshot answers for a catalog that could
     // not answer, never for a 404 on an id the agent got wrong (#837).
-    const reason = catalogFallbackFor(err);
-    const snap = reason ? getPreviewSnapshot(resourceId) : null;
+    const reason = bypassCache ? null : catalogFallbackFor(err);
+    const snap = reason ? getPreviewSnapshot(resourceId, Date.now(), catalogCacheContext()) : null;
     if (!snap || !reason) throw err;
-    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs, Date.now(), reason) };
+    return {
+      r: snap.meta as any,
+      label: catalogCacheLabel(snap.savedAtMs, Date.now(), reason),
+      cacheStatus: "offline",
+    };
   }
 }
 
-export async function preview(resourceId: string): Promise<string> {
-  const { r, label } = await previewData(resourceId);
+export async function preview(resourceId: string, bypassCache = false): Promise<string> {
+  const { r, label, cacheStatus } = await previewData(resourceId, bypassCache);
   // Publisher-supplied title/description are unbounded at the source, so cap
   // them before serializing rather than truncating the JSON afterwards (#582).
   const out: Record<string, unknown> = applyPreviewLimits({
@@ -2027,6 +2150,7 @@ export async function preview(resourceId: string): Promise<string> {
     type: r.resourceType,
     verificationStatus: r.verificationStatus,
     accessUrl: r.accessUrl,
+    cacheStatus,
   });
   if (label) out.offlineCache = label;
   return serializePreview(out);
@@ -3757,6 +3881,7 @@ export function networkProfile(): string {
     usdcContractId,
     timeouts: describeTimeouts(TIMEOUTS),
     retries: describeRetryPolicy(RETRY_POLICY),
+    proxy: describeProxyConfig(PROXY_CONFIG),
     warnings,
   };
 
@@ -4040,7 +4165,7 @@ async function dispatchToolOutcome(
         return parsed.ok ? searchOutcome(parsed.filters) : parsed.error;
       }
       case "mindvault_preview":
-        return preview(requiredString(args, "resourceId"));
+        return preview(requiredString(args, "resourceId"), flag(args, "bypassCache"));
       case "mindvault_register":
         return register(
           requiredString(args, "name"),
@@ -4139,6 +4264,8 @@ async function dispatchToolOutcome(
           requiredString(args, "resourceId"),
           optionalString(args, "expectedMetadataHash"),
         );
+      case "mindvault_metadata_diff":
+        return metadataDiff(requiredString(args, "resourceId"));
       case "mindvault_verify_attestation":
         return verifyAttestation(
           requiredString(args, "resourceId"),
@@ -4212,7 +4339,7 @@ async function dispatchToolOutcome(
         return importWallet({
           secretKey: optionalString(args, "secretKey"),
           profile: optionalString(args, "profile"),
-          persist: flag(args, "persist"),
+          confirm: flag(args, "confirm"),
         });
       case "mindvault_rotate_publisher_key":
         return rotatePublisherKey(optionalString(args, "profile"));

@@ -48,7 +48,8 @@
     "@stellar/stellar-sdk": "^15.0.1",
     "@x402/fetch": "^2.9.0",
     "@x402/stellar": "^2.9.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "undici": "^7.29.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
