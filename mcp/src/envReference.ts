@@ -32,6 +32,13 @@ import { DEFAULT_COOLDOWN_MS, DEFAULT_MAX_ATTEMPTS } from "./rpcFailover.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES } from "./auditLogRotation.js";
 import { DEFAULT_CATALOG_CACHE_CONFIG } from "./catalogCache.js";
 import { DEFAULT_MAX_RESPONSE_BYTES } from "./responseSize.js";
+import {
+  DEFAULT_STATE_BACKUP_MAX_AGE_DAYS,
+  DEFAULT_STATE_BACKUP_MAX_FILES,
+  DEFAULT_STATE_BACKUP_MAX_BYTES,
+  DEFAULT_AUDIT_LOG_MAX_AGE_DAYS,
+  DEFAULT_RECEIPT_RETENTION_DAYS,
+} from "./retention.js";
 
 /** One environment variable, as an operator reads it in a reference page. */
 export interface EnvVarDoc {
@@ -350,6 +357,38 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     description: "Rotated audit-log generations kept besides the live file.",
     default: `${DEFAULT_MAX_FILES} (files)`,
     source: "mcp/src/auditLogRotation.ts",
+  },
+  {
+    name: "MINDVAULT_STATE_BACKUP_MAX_AGE_DAYS",
+    description: "Age limit for ~/.mindvault/backups/state-*.backup files.",
+    default: `${DEFAULT_STATE_BACKUP_MAX_AGE_DAYS} (days)`,
+    source: "mcp/src/retention.ts",
+  },
+  {
+    name: "MINDVAULT_STATE_BACKUP_MAX_FILES",
+    description: "Count limit for state backups; oldest backups beyond N are deleted.",
+    default: `${DEFAULT_STATE_BACKUP_MAX_FILES} (files)`,
+    source: "mcp/src/retention.ts",
+  },
+  {
+    name: "MINDVAULT_STATE_BACKUP_MAX_BYTES",
+    description: "Total-size cap for the state backups directory; oldest deleted until under cap.",
+    default: `${DEFAULT_STATE_BACKUP_MAX_BYTES} (bytes)`,
+    source: "mcp/src/retention.ts",
+  },
+  {
+    name: "MINDVAULT_AUDIT_LOG_MAX_AGE_DAYS",
+    description:
+      "Age limit for rotated audit generations (audit.jsonl.1, .2, …); never the live/active audit file.",
+    default: `${DEFAULT_AUDIT_LOG_MAX_AGE_DAYS} (days)`,
+    source: "mcp/src/retention.ts",
+  },
+  {
+    name: "MINDVAULT_RECEIPT_RETENTION_DAYS",
+    description:
+      "Age limit for receipt records in the purchases store; records older than the limit are pruned.",
+    default: `${DEFAULT_RECEIPT_RETENTION_DAYS} (days)`,
+    source: "mcp/src/retention.ts",
   },
   {
     name: "MINDVAULT_USER_AGENT",

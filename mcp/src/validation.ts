@@ -38,6 +38,7 @@ import { CATALOG_MAX_LIMIT, CATALOG_SORT_VALUES } from "./catalogFilters.js";
 import { REGISTRY_LIST_MAX_LIMIT } from "./registryPagination.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_ROW_FIELDS } from "./receipts.js";
 import { DEBUG_BUNDLE_MAX_AUDIT_LINES } from "./debugBundleSchema.js";
+import { SUPPORT_BUNDLE_MAX_AUDIT_LINES } from "./supportBundle.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import {
   MAX_SETTLEMENT_TIMEOUT_MS,
@@ -421,10 +422,21 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     blob: { kind: "string", required: true, maxLength: 1_048_576 },
     passphrase: PASSPHRASE,
   },
-  mindvault_metrics: { reset: { kind: "flag" } },
+  mindvault_metrics: {
+    reset: { kind: "flag" },
+    format: { kind: "enum", values: ["json", "otlp"] },
+  },
   mindvault_debug_bundle: {
     auditLogLines: { kind: "integer", min: 0, max: DEBUG_BUNDLE_MAX_AUDIT_LINES },
     includeEnvironment: { kind: "flag" },
+  },
+  mindvault_onchain_preflight: {
+    requestedSchemaVersion: { kind: "integer", min: 0 },
+  },
+  mindvault_migration_preview: {},
+  mindvault_support_bundle: {
+    incidentId: { kind: "string", required: true, minLength: 1, maxLength: 128 },
+    auditLines: { kind: "integer", min: 0, max: SUPPORT_BUNDLE_MAX_AUDIT_LINES },
   },
   mindvault_set_tags: {
     resourceId: RESOURCE_ID,

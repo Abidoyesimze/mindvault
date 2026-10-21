@@ -97,11 +97,16 @@ import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
 import { exportReceiptsTool } from "./receipts.js";
 import { debugBundleTool } from "./debugBundle.js";
+import { onchainPreflightTool } from "./onchainPreflight.js";
+import { applyMigratedState, migrationPreviewTool } from "./stateMigrationPreview.js";
+import { supportBundleTool } from "./supportBundle.js";
+import { applyRetentionPolicies } from "./retention.js";
 import { exportReceiptsToolWithTimeout } from "./receipts.js";
 import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
 import { advertisedTools, hasOutputSchema, outputSchemaFor } from "./toolSurface.js";
 import { enforceOutputContract } from "./outputValidation.js";
-import { dryRunPublish, dryRunBuy } from "./dryRun.js";
+import { dryRunPublish, dryRunBuy, type DryRunPublishLive } from "./dryRun.js";
+import { correlationHeaders } from "./correlation.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
 import {
@@ -262,6 +267,13 @@ import {
 import { createCatalogCursor, resolveCatalogCursor } from "./catalogCursor.js";
 import { publishBatch, type BatchPublishItem } from "./tools/publish.js";
 import { buyLease, leaseStatus } from "./tools/leases.js";
+import {
+  _setAgentWallet as _setAgentWalletRuntime,
+  _setAgentApiKey as _setAgentApiKeyRuntime,
+  _resetProfiles as _resetProfilesRuntime,
+} from "./runtime.js";
+
+export { acceptTransfer, cancelTransfer };
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -409,19 +421,27 @@ function currentApiKey(): string | null {
   return profiles[activeProfileName]?.apiKey ?? null;
 }
 
+// The profile store exists twice: index.ts keeps one copy for the handlers
+// defined here, runtime.ts keeps another for the tools in ./tools/* (which
+// read it through requireWallet). These test/state hooks therefore write to
+// both, so a wallet or API key set through this module is visible to every
+// tool regardless of which store it reads.
 export function _setAgentWallet(w: AgentWallet | null): void {
   if (w) {
     activeProfile().wallet = w;
     bindActiveProfileToNetwork();
   } else delete activeProfile().wallet;
+  _setAgentWalletRuntime(w);
 }
 export function _setAgentApiKey(k: string | null): void {
   if (k) activeProfile().apiKey = k;
   else delete activeProfile().apiKey;
+  _setAgentApiKeyRuntime(k);
 }
 export function _resetProfiles(): void {
   profiles = {};
   activeProfileName = DEFAULT_PROFILE;
+  _resetProfilesRuntime();
 }
 
 function applyRestoredState(state: ProfileState): void {
@@ -509,7 +529,24 @@ function loadState(): void {
         safeErrorMessage(err),
       );
     }
-    saveState();
+    // Apply the migration write with restore-on-failure (#1046): if the
+    // migrated state cannot be persisted, the exact prior bytes go back to
+    // the state file before the error is surfaced, so a failed upgrade never
+    // leaves a half-migrated or emptied state behind.
+    try {
+      applyMigratedState({
+        priorJson: raw,
+        write: () => {
+          if (!saveState()) throw new Error(`could not write migrated state to ${STATE_FILE}`);
+        },
+        restore: (priorJson) => writeAtomically(STATE_FILE, priorJson, 0o600),
+      });
+    } catch (err) {
+      console.error(
+        "MindVault MCP: failed to persist migrated state (prior state restored):",
+        safeErrorMessage(err),
+      );
+    }
   }
 }
 
@@ -1869,7 +1906,10 @@ export function exportProfilesOutcome(): ToolOutcome {
     activeProfile: activeProfileName,
     profiles,
   });
-  return { text: JSON.stringify(payload, null, 2), structured: payload };
+  return {
+    text: JSON.stringify(payload, null, 2),
+    structured: payload as unknown as Record<string, unknown>,
+  };
 }
 
 export function importProfilesOutcome(data: string): ToolOutcome {
@@ -4355,6 +4395,12 @@ async function dispatchToolOutcome(
         return formatVerifyInstall(verifyInstall(process.env));
       case "mindvault_debug_bundle":
         return debugBundleTool(rawRecord);
+      case "mindvault_onchain_preflight":
+        return onchainPreflightTool(rawRecord);
+      case "mindvault_migration_preview":
+        return migrationPreviewTool(rawRecord);
+      case "mindvault_support_bundle":
+        return supportBundleTool(rawRecord);
       case "mindvault_recover_catalog_cache":
         return recoverCatalogCache();
       case "mindvault_wallet_balances":
@@ -4589,6 +4635,18 @@ if (!process.env.VITEST) {
   // cold-cache cost, which is the status quo this is improving on, not a
   // regression.
   prewarmCatalogCache().catch(() => {});
+
+  // Best-effort retention pass (#1044): prune expired state backups, rotated
+  // audit generations, and stale receipt records once per boot, under the
+  // documented MINDVAULT_* retention settings and their safe defaults. Never
+  // throws and never deletes the active state file or the live audit log;
+  // failures are logged and the server starts anyway.
+  const retentionReport = applyRetentionPolicies(process.env);
+  if (retentionReport.errors.length > 0) {
+    logger.warn(
+      `MindVault MCP: retention pass completed with errors: ${retentionReport.errors.join("; ")}`,
+    );
+  }
 
   await server.connect(transport);
 }

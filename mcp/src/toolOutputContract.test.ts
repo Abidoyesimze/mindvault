@@ -23,6 +23,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { debugBundleTool } from "./debugBundle.js";
+import { onchainPreflightTool } from "./onchainPreflight.js";
+import { migrationPreviewTool } from "./stateMigrationPreview.js";
+import { supportBundleTool } from "./supportBundle.js";
 import { dryRunBuy, dryRunOnchain, dryRunPublish } from "./dryRun.js";
 import { mapTransportError, troubleshootingHint } from "./errorMapping.js";
 import { createMetricsRecorder } from "./metrics.js";
@@ -141,6 +144,10 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
     ),
   mindvault_metrics: () => json(createMetricsRecorder(true, 1000).snapshot()),
   mindvault_debug_bundle: () => debugBundleTool({}, new Date(0)),
+  mindvault_onchain_preflight: () => onchainPreflightTool({}),
+  mindvault_migration_preview: () => migrationPreviewTool({}),
+  mindvault_support_bundle: () =>
+    supportBundleTool({ incidentId: "mv-01hq7x9k2m4p6r8t0v2w4y6a8c", auditLines: 25 }),
 
   // ── Payloads in the shape the network-backed handlers build ────────────
   mindvault_setup_wallet: () => json({ profile: "default", address: ADDRESS, persisted: true }),
@@ -157,6 +164,48 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       publisherRegistered: false,
       note: null,
     }),
+  mindvault_wallet_balances: () =>
+    json({
+      source: "horizon",
+      requestedAt: "1970-01-01T00:00:00.000Z",
+      platform: null,
+      agents: [
+        {
+          profile: "default",
+          address: ADDRESS,
+          active: true,
+          publisherRegistered: false,
+          xlmBalance: "10.0000000",
+          xlmReserve: "1.5000000",
+          xlmAvailable: "8.5000000",
+          usdcBalance: "5.0000000",
+          usdcStatus: "trustline",
+          note: null,
+        },
+      ],
+      count: 1,
+      statistics: { totalUsdc: "5.0000000", totalXlm: "10.0000000" },
+      message: "1 agent wallet checked.",
+    }),
+  mindvault_server_endpoints: () =>
+    json({
+      source: "openapi",
+      baseUrl: "https://example.com",
+      openapi: "3.1.0",
+      server: { title: "MindVault API", version: "1.0.0" },
+      endpointCount: 1,
+      operations: [
+        {
+          method: "GET",
+          path: "/health",
+          operationId: "health",
+          tags: ["ops"],
+          summary: "Liveness probe",
+        },
+      ],
+      paths: ["/health"],
+      message: "1 endpoint discovered.",
+    }),
   mindvault_use_profile: () =>
     json({ profile: "buyer", address: ADDRESS, publisherRegistered: null }),
   mindvault_list_profiles: () =>
@@ -164,6 +213,14 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       active: "default",
       profiles: [{ name: "default", address: ADDRESS, publisherRegistered: false, active: true }],
     }),
+  mindvault_export_profiles: () =>
+    json({
+      schema: "mindvault.profile-export",
+      version: 1,
+      activeProfile: "default",
+      profiles: [{ name: "default", network: "testnet", preferences: {} }],
+    }),
+  mindvault_import_profiles: () => json({ imported: ["default"] }),
   mindvault_browse: () =>
     json({
       items: [
