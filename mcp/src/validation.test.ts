@@ -562,10 +562,16 @@ describe("stellar_address arguments", () => {
       validateToolArgs("mindvault_terms", { operation: "get", creator: VALID_PUBLIC_KEY }),
     ).not.toThrow();
     expect(() =>
-      validateToolArgs("mindvault_royalty", { resourceId: "res-001", royaltyRecipient: VALID_PUBLIC_KEY }),
+      validateToolArgs("mindvault_royalty", {
+        resourceId: "res-001",
+        royaltyRecipient: VALID_PUBLIC_KEY,
+      }),
     ).not.toThrow();
     expect(() =>
-      validateToolArgs("mindvault_lease_status", { resourceId: "res-001", holder: VALID_PUBLIC_KEY }),
+      validateToolArgs("mindvault_lease_status", {
+        resourceId: "res-001",
+        holder: VALID_PUBLIC_KEY,
+      }),
     ).not.toThrow();
     expect(() =>
       validateToolArgs("mindvault_register", {

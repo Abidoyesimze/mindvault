@@ -679,6 +679,49 @@ pub struct Resource {
     pub royalty_recipient: Option<Address>,
 }
 
+/// A read-only projection of a [`Resource`] returned by [`VaultRegistry::export_page`].
+///
+/// The set of fields is stable: `EXPORT_VIEW_VERSION` is bumped whenever a
+/// field is added, removed, or changes meaning so migration tooling can gate
+/// on the version rather than guessing the layout.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResourceExport {
+    /// Position of this resource in the catalog index (0-based).
+    pub index: u32,
+    /// Whether the resource is currently flagged by a moderator.
+    pub flagged: bool,
+    pub id: String,
+    pub creator: Address,
+    pub state: ResourceState,
+    /// Backwards-compatible projection of `state == ResourceState::Listed`.
+    pub listed: bool,
+    /// Listed price in USDC base units ([`USDC_DECIMALS`] = 7).
+    pub price: i128,
+    pub verified: VerificationStatus,
+    pub frozen: bool,
+    pub schema_version: u32,
+    pub version: u32,
+    pub created_at: u32,
+    pub updated_at: u32,
+}
+
+/// One page of [`ResourceExport`] items returned by [`VaultRegistry::export_page`].
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExportPage {
+    /// View schema version — see [`EXPORT_VIEW_VERSION`].
+    pub export_version: u32,
+    /// On-chain resource schema version at the time of the export.
+    pub resource_schema_version: u32,
+    /// Total number of registered resources at the time of the call.
+    pub total: u32,
+    pub items: Vec<ResourceExport>,
+    /// First index slot to pass as `cursor` on the next call, or `None`
+    /// when this page reaches the end of the catalog.
+    pub next_cursor: Option<u32>,
+}
+
 /// Input for a single resource in a batch registration.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -959,18 +1002,6 @@ pub enum DataKey {
     /// Redundant metadata pointers set via `set_metadata_pointers`. The
     /// entry at `primary` always mirrors `Resource.metadata`.
     MetadataPointers(String),
-    /// Moderator who last called `flag_resource`, `unflag_resource`, or
-    /// `set_flag_reason_hash` for a resource. Read back by `flag_details`.
-    FlagModerator(String),
-    /// Aggregated settled-payment earnings for a creator wallet address.
-    /// Written by `settle_payment` and read by `creator_earnings_estimate`.
-    /// Value type: `(i128, u32)` tuple — (total USDC stroops of all settled
-    /// receipts for resources owned by this creator at settlement time, count).
-    CreatorEarnings(Address),
-    /// Ordered history of verification status changes for a verifier address.
-    /// Written by `set_verification_status`; read by `get_verifier_status_history`.
-    /// Value type: `Vec<VerifierStatusEntry>`.
-    VerifierHistory(Address),
     /// Optional recovery admin set via `bootstrap_dual_admin` or
     /// `set_recovery_admin`; may call `recover_admin` if the admin key is lost.
     RecoveryAdmin,
@@ -978,27 +1009,6 @@ pub enum DataKey {
     /// metadata or price change. Absent (read as `0`) until the first such
     /// mutation. Read by `get_revision`.
     Revision(String),
-    /// Registry-wide creator terms hash fallback, used by `get_terms_hash`
-    /// when a resource has no per-creator override.
-    RegistryTerms,
-    /// Creator-configured refund window in ledgers for payment receipts.
-    RefundWindow,
-    /// Ledger sequence after which a receipt is no longer refundable by its
-    /// creator. Written when the receipt is settled.
-    RefundDeadline(String),
-    /// Address entitled to receive a refund for a payment receipt.
-    PaymentRecipient(String),
-    /// A recorded refund for a payment receipt, keyed by `refund_id`.
-    RefundReceipt(String),
-    /// Cumulative refunded amount for a payment receipt id.
-    RefundedAmount(String),
-    /// Secondary index mapping a refund settlement tx hash to its `refund_id`.
-    RefundTxHash(String),
-    /// Rejected-attempt bookkeeping for a purchase-receipt anchor pair
-    /// `(resource_id, buyer)`.
-    AnchorAttempts(String, Address),
-    /// A time-limited access lease for `(resource_id, holder)`.
-    Lease(String, Address),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -1409,6 +1419,10 @@ pub enum Error {
     /// soon after `nominate_new_admin` (before `ADMIN_NOMINATION_MIN_GAP`
     /// ledgers have elapsed).
     AdminNominationExpired = 50,
+    /// The listing-revision counter for a resource has reached `u32::MAX` and
+    /// cannot be incremented further. The resource can still be read; only
+    /// metadata-pointer updates (which increment the counter) are blocked.
+    RevisionOverflow = 51,
 }
 
 #[contract]
@@ -1740,12 +1754,14 @@ impl VaultRegistry {
             env.storage()
                 .persistent()
                 .remove(&DataKey::MetadataPointers(id.clone()));
+            let revision = Self::bump_listing_revision(&env, &id)?;
             env.events().publish(
                 (symbol_short!("updmeta"), id.clone()),
                 MetadataUpdateEvent {
                     id,
                     old_metadata,
                     new_metadata: metadata,
+                    revision,
                 },
             );
         }

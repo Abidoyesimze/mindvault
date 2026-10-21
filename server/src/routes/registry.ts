@@ -30,7 +30,6 @@ router.get("/registry/status", async (_req, res) => {
 
 export default router;
 
-
 // Issue #1034: catalog comparison across testnet and mainnet profiles
 export function compareCatalogs(
   testnet: Array<{ id: string; price: string; title?: string }>,
@@ -49,5 +48,10 @@ export function compareCatalogs(
       diffs.push({ id, testnet: t, mainnet: m });
     }
   }
-  return { onlyTestnet, onlyMainnet, diffs, counts: { testnet: testnet.length, mainnet: mainnet.length } };
+  return {
+    onlyTestnet,
+    onlyMainnet,
+    diffs,
+    counts: { testnet: testnet.length, mainnet: mainnet.length },
+  };
 }

@@ -181,7 +181,6 @@ router.get("/agent/status", async (_req, res) => {
 
 export default router;
 
-
 // Issue #1030: bounded cancellation support for long-running verification
 import type { Request, Response } from "express";
 

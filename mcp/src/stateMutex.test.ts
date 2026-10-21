@@ -103,7 +103,11 @@ describe("stateMutex", () => {
 
     it("a throwing call does not poison the queue", async () => {
       const error = new Error("boom");
-      await expect(mutex.runExclusive(() => { throw error; })).rejects.toThrow("boom");
+      await expect(
+        mutex.runExclusive(() => {
+          throw error;
+        }),
+      ).rejects.toThrow("boom");
 
       // Queue should still work
       const result = await mutex.runExclusive(() => "recovered");
@@ -111,9 +115,11 @@ describe("stateMutex", () => {
     });
 
     it("a rejecting promise does not poison the queue", async () => {
-      await expect(mutex.runExclusive(async () => { throw new Error("async boom"); })).rejects.toThrow(
-        "async boom",
-      );
+      await expect(
+        mutex.runExclusive(async () => {
+          throw new Error("async boom");
+        }),
+      ).rejects.toThrow("async boom");
 
       const result = await mutex.runExclusive(() => "recovered");
       expect(result).toBe("recovered");
@@ -121,7 +127,9 @@ describe("stateMutex", () => {
 
     it("pending count is correct after a throwing call", async () => {
       try {
-        await mutex.runExclusive(() => { throw new Error("boom"); });
+        await mutex.runExclusive(() => {
+          throw new Error("boom");
+        });
       } catch {
         // ignore
       }

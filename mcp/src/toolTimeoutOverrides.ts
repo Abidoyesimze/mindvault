@@ -194,9 +194,7 @@ export function assertToolTimeoutOverridesWithinDeadline(
 ): void {
   const errors = validateToolTimeoutOverrides(overrides, maxTransportMs);
   if (errors.length === 0) return;
-  throw new Error(
-    `Invalid per-tool timeout configuration: ${errors.join(" ")}`,
-  );
+  throw new Error(`Invalid per-tool timeout configuration: ${errors.join(" ")}`);
 }
 
 /**
