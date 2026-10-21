@@ -269,18 +269,17 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `list_page(cursor, limit)`                                                   | —                                                        | `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                                         | `CatalogPage`                          | Paginated page with `items` + `next_cursor`.                                                                                                                                                                                                                                                             |
 | `list_listed_page(cursor, limit)` | — | `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `CatalogPage` | Cursor page of listed-only resources. |
 | `list_by_dispute_status_page(flagged, cursor, limit)` | — | `flagged: bool`; `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `CatalogPage` | Cursor page filtered by dispute-flag state. |
+| `list_by_creator_page_filtered(creator, cursor, limit, listed, state)` | — | `creator: Address`; `cursor: IdCursor`; `limit: u32` — capped at `LIST_PAGE_CAP` (20); `listed: Option<bool>`; `state: Option<ResourceState>` | `IdPage` | Id-cursor page of a creator's resources, filtered by listed state and lifecycle state. |
 | `list_by_creator_page(creator, cursor, limit)` | — | `creator: Address`; `cursor: IdCursor`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `IdPage` | Id-cursor page of a creator's resources. |
+| `search_by_tag_prefix(prefix, cursor, limit)` | — | `prefix: String` — normalized like a tag; `cursor: u32`; `limit: u32` — clamped to `1..=LIST_PAGE_CAP` (20) | `CatalogPage` | Bounded search for the resources carrying a tag with the given prefix. |
 | `list_by_tag_page(tag, cursor, limit)` | — | `tag: String`; `cursor: IdCursor`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `IdPage` | Id-cursor page of resources carrying `tag`. |
 | `list_listed(start, limit)`                                                  | —                                                        | `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                                          | `Vec<Resource>`                        | Paginated list of listed-only resources. Delisted resources are skipped; relisted resources reappear.                                                                                                                                                                                                    |
-| `list_listed_page(cursor, limit)` | — | `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `CatalogPage` | Paginated listed-only page with `items` + `next_cursor`. |
 | `list_by_creator(creator, start, limit)`                                     | —                                                        | `creator: Address`; `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                      | `Vec<Resource>`                        | Paginated list of resources currently owned by `creator`, in registration order.                                                                                                                                                                                                                         |
-| `list_by_creator_page(creator, cursor, limit)` | — | `creator: Address`; `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `CatalogPage` | Paginated owner-filtered page with `items` + `next_cursor`. |
 | `list_by_tag(tag, start, limit)`                                             | —                                                        | `tag: String` (normalized to lowercase); `start: u32`; `limit: u32` — capped at 20                                                                                                                                                                   | `Vec<Resource>`                        | Paginated list of resources carrying `tag`, in tag-index insertion order. The lookup tag is normalized to lowercase before querying. Tombstoned resources are excluded from results. Returns an empty vec for unknown tags (not `NotFound`). Each resource entry read has its TTL bumped.                |
-| `list_by_tag_page(tag, cursor, limit)` | — | `tag: String`; `cursor: IdCursor`; `limit: u32` — capped at 20 | `IdPage` | Paginated tag-filtered page with `items` + `next_cursor`. |
 | `list_by_dispute_status(flagged, start, limit)`                              | —                                                        | `flagged: bool`; `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                                         | `Vec<Resource>`                        | Paginated list of resources filtered by whether `dispute_flag` is active, preserving catalog order. Each resource entry read has its TTL bumped.                                                                                                                                                         |
-| `list_by_dispute_status_page(flagged, cursor, limit)` | — | `flagged: bool`; `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20) | `CatalogPage` | Paginated dispute-filtered page with `items` + `next_cursor`. |
 | `list_by_verification_status(status, start, limit)`                          | —                                                        | `status: VerificationStatus`; `start: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                                                                                           | `Vec<Resource>`                        | Paginated list of resources filtered by verification `status` (pending/verified/rejected), preserving catalog order. Each resource entry read has its TTL bumped.                                                                                                                                        |
 | `top_tags(limit)`                                                            | —                                                        | `limit: u32` — capped at `TOP_TAGS_CAP` (20)                                                                                                                                                                                                        | `Vec<TagPopularity>`                   | Return the most popular tags sorted by descending use-count, capped at `limit`. Each entry is a `TagPopularity { tag, count }`. Returns an empty vec when no tags have been assigned.                                                                                                                    |
+| `export_page(cursor, limit)` | — | `cursor: u32`; `limit: u32` — clamped to `1..=EXPORT_PAGE_CAP` | `ExportPage` | Bounded, deterministic export of every resource in catalog-index order for migration and audit tooling. Includes every lifecycle state (`Delisted`, `Frozen`, `Disputed`, `Tombstoned`); read-only and available while paused. |
 | `list_by_state(state, cursor, limit)`                                        | —                                                        | `state: ResourceState` — one of `Listed`, `Delisted`, `Frozen`, `Disputed`, `Tombstoned`; `cursor: u32`; `limit: u32` — capped at `LIST_PAGE_CAP` (20)                                                                                              | `CatalogPage`                          | Paginated list of resources whose lifecycle state exactly matches `state`, preserving catalog order. Unlike the boolean `listed` projection, this distinguishes all five states. Returns a `CatalogPage` with `items` and `next_cursor`. Each resource entry read has its TTL bumped.                    |
 | `get(id)`                                                                    | —                                                        | `id: String`                                                                                                                                                                                                                                         | `Result<Resource, Error>`              | Read a single resource. Errors `NotFound` if absent.                                                                                                                                                                                                                                                     |
 | `get_resource_state(id)`                                                     | —                                                        | `id: String`                                                                                                                                                                                                                                         | `Result<ResourceState, Error>`              | Read the current lifecycle state of a resource. Errors `NotFound` if absent.                                                                                                                                                                                                                                   |
@@ -349,7 +348,6 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `record_payment(settler, receipt_id, resource_id, payer, amount, tx_hash)`   | `settler` + `payer`                                      | `settler: Address` — holder of the settler role; `receipt_id: String` — unique, 1-64 bytes; `resource_id: String`; `payer: Address`; `amount: i128` — `> 0`; `tx_hash: String` — 1-128 bytes                                                         | `Result<(), Error>`                    | Record an x402/Soroban payment receipt in `Escrowed` state and index it under `(resource_id, payer)`. Emits `payment` and a `nomemo` provenance warning — prefer `record_payment_with_memo`.                                                                                                                                                                                   |
 | `record_payment_with_memo(settler, receipt_id, resource_id, payer, amount, tx_hash, memo)` | `settler` + `payer` | Same as `record_payment`, plus `memo: String` — the settlement tx `MEMO_TEXT`, must be `mv:<resource_id>` | `Result<(), Error>` | Record a payment receipt whose settlement memo proves which resource was paid for. Errors `InvalidPaymentMemo` on a non-canonical memo. Emits `payment`. |
 | `get_payment_memo(receipt_id)` | — | `receipt_id: String` | `Option<String>` | Canonical memo stored for a receipt by `record_payment_with_memo`, or `None`. |
-| `record_payment_idempotent(settler, receipt_id, resource_id, payer, amount, tx_hash)` | `settler` + `payer` | Same as `record_payment` | `Result<PaymentReceipt, Error>` | Retry-safe `record_payment`: returns the stored receipt when `receipt_id` already matches the same arguments; errors `ReceiptAlreadyExists` on a conflicting reuse. |
 | `settle_payment(settler, receipt_id)`                                        | `settler`                                                | `settler: Address`; `receipt_id: String`                                                                                                                                                                                                             | `Result<(), Error>`                    | Advance a receipt from `Escrowed` to `Settled`. Errors `InvalidPaymentTransition` if it is not escrowed. Emits `settle`.                                                                                                                                                                                 |
 | `get_payment(receipt_id)`                                                    | —                                                        | `receipt_id: String`                                                                                                                                                                                                                                 | `Result<PaymentReceipt, Error>`        | Fetch a receipt by id. Errors `NotFound` if absent. Bumps the entry's TTL.                                                                                                                                                                                                                               |
 | `get_payment_receipt(resource_id, payer)`                                    | —                                                        | `resource_id: String`; `payer: Address`                                                                                                                                                                                                              | `Result<PaymentReceipt, Error>`        | Fetch the most recent receipt recorded for the pair, via the `PaymentIndex` secondary index. Errors `NotFound` if absent.                                                                                                                                                                                |
@@ -660,18 +658,28 @@ if (page.next_cursor !== null) {
 | `48` | `DuplicateTxHash`               | A payment or refund receipt already uses the supplied transaction hash (`tx_hash`).      |
 | `49` | `FeeConfigNotSet`               | `set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`. |
 | `50` | `AdminNominationExpired`        | The pending admin nomination is missing or has expired.                                   |
+| `51` | `InvalidMetadataPointers`        | `set_metadata_pointers` received an empty, oversized (> `MAX_METADATA_POINTERS`), or duplicate pointer list, or an out-of-range `primary` index. |
+| `52` | `AdminAlreadySet`                | `bootstrap_dual_admin` was called after an admin was already set.                        |
+| `53` | `RecoveryAdminNotSet`            | `recover_admin` was called but no recovery admin is configured.                          |
+| `54` | `UnsupportedResourceSchema`      | A resource uses a schema version this deployment cannot safely read or upgrade.          |
+| `55` | `RevisionOverflow`               | A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state. |
 
 #### Error budget
 
-This enum is **full**. The protocol caps a contract error enum at 50 cases
-(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`–`50` are all
-allocated, so `#[contracterror]` fails to compile with `LengthExceedsMax` on a
-`51` variant. Adding an error code therefore requires retiring an existing one
-first, and retiring a code is a breaking change for anything matching on it.
-Codes formerly known as `InvalidMetadataPointers` (51), `AdminAlreadySet` (52),
-`RecoveryAdminNotSet` (53), and `UnsupportedResourceSchema` (54) were folded
-into `InvalidMetadataPointer`, `AlreadyRegistered`, `AdminNotSet`, and
-`InvalidResourceId` respectively to stay within the cap.
+This enum is declared with `#[contracterror(export = false)]`. The protocol
+caps a *spec-exported* contract error enum at 50 cases
+(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`–`55` are all
+allocated, so a spec-exported `#[contracterror]` would fail to compile with
+`LengthExceedsMax` on a `51` variant. Disabling the spec export keeps the
+contract buildable; the discriminants and names below remain the on-wire
+contract error codes, and clients still decode them from the failed invocation
+result.
+
+Codes `51`–`55` were added back when the listing-revision and dual-admin
+recovery features landed: `InvalidMetadataPointers` (51), `AdminAlreadySet`
+(52), `RecoveryAdminNotSet` (53), `UnsupportedResourceSchema` (54), and
+`RevisionOverflow` (55). They are distinct failure modes, so folding them
+into a broader existing code would hide the cause from callers.
 
 Plan new validation around an existing code where the semantics genuinely fit,
 or prefer a behavior that needs no new code (a documented no-op, or folding the
@@ -747,7 +755,9 @@ apart, so update all three together.
 | `rmverif` | `RoleChange { admin, target, granted: false }` (topic also carries target) | `remove_verifier()` succeeds |
 | `verrot`    | `VerifierRotation { old_verifier, new_verifier, ledger }`                               | `rotate_verifier()` succeeds                               |
 | `reindex`   | `new_count: u32 (topic carries old_count: u32)`                                          | `repair_index()` succeeds                                  |
+| `nomemo`    | `(receipt_id: String, tx_hash: String)`                                                      | `record_payment()` records a payment that carries no canonical `mv:<resource_id>` memo |
 | `payment`   | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }` | `record_payment()` succeeds                                |
+| `setregt`   | `terms_hash: String`                                                                       | `set_registry_terms()` updates the registry-wide listing terms hash |
 | `settle`    | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }` | `settle_payment()` succeeds                                |
 | `addsettlr` | `RoleChange { admin, target, granted: true }` (topic also carries target) | `add_settler()` succeeds |
 | `rmsettlr` | `RoleChange { admin, target, granted: false }` (topic also carries target) | `remove_settler()` succeeds |
@@ -770,7 +780,7 @@ apart, so update all three together.
 The `setlisted` event payload is a two-element tuple `(old_listed, new_listed)` so
 listeners can determine the transition direction without querying additional state:
 
-| `anchrxhst` | `(resource_id: String, buyer: Address, attempts: AnchorAttempts)` | `attempt_anchor_purchase_receipt()` hits the retry cap |
+| `anchrxhst` | `(resource_id: String, buyer: Address)` — data is the final `AnchorAttempts` | `attempt_anchor_purchase_receipt()` hits the retry cap |
 | `lease`     | `(resource_id: String, lease: Lease)` | `buy_lease()` succeeds |
 | `leasesetl` | `(resource_id: String, lease: Lease)` | `settle_lease()` succeeds |
 | `leaserevk` | `(resource_id: String, lease: Lease)` | `revoke_lease()` succeeds |
@@ -889,14 +899,63 @@ repeat an entry. The `*_page` variants fix the cursor domain instead:
 
 | Listing                                       | Cursor                    | Why it is stable                                                                                                                                                                                |
 | --------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `list_page`, `list_listed_page`, `list_by_dispute_status_page`, `list_by_verification_status` | catalog index (`u32`)     | `Index(i)` slots are append-only and never renumbered, so `next_cursor` names a slot, not a count of matches. Each slot is visited once; its state at that moment decides whether it is returned. |
-| `list_by_creator_page`, `list_by_tag_page`    | `IdCursor` (id-based)     | The backing vectors shift when an entry is removed. The cursor records the last id returned; resuming re-finds it (or, if it was removed too, the first entry registered after it).              |
+| `list_page`, `list_listed_page`, `list_by_dispute_status_page`, `list_by_verification_status`, `search_by_tag_prefix` | catalog index (`u32`)     | `Index(i)` slots are append-only and never renumbered, so `next_cursor` names a slot, not a count of matches. Each slot is visited once; its state at that moment decides whether it is returned. |
+| `list_by_creator_page`, `list_by_creator_page_filtered`, `list_by_tag_page` | `IdCursor` (id-based)     | The backing vectors shift when an entry is removed. The cursor records the last id returned; resuming re-finds it (or, if it was removed too, the first entry registered after it).              |
 
 A flag that flips between two `list_by_dispute_status_page` calls therefore
 lands the resource in at most one of them: the page whose scan reached its
 slot while the flag matched. The unpaged functions keep their signatures for
 existing callers; document their `start` as a catalog index, never as a match
 count.
+
+### Creator-scoped listing with filters
+
+`list_by_creator_page_filtered(creator, cursor, limit, listed, state)` is the
+filtered counterpart of `list_by_creator_page`: it walks the same
+creator-scoped index with the same `IdCursor` pagination, so a creator
+dashboard reads only its own inventory instead of scanning the global
+catalog, and the two calls can be interleaved.
+
+- `listed` filters on the creator-facing listing projection. `Some(true)`
+  keeps only resources in the `Listed` state, `Some(false)` keeps only the
+  ones that are *not* listed, `None` keeps every resource.
+- `state` filters on the explicit lifecycle state (`ResourceState`); `None`
+  keeps every state.
+- The two filters compose with **AND**: a resource is returned only when it
+  satisfies both. A contradictory pair (`listed = Some(true)` with
+  `state = Some(Delisted)`) yields an empty page, never an error.
+- `limit` is the maximum number of resources the page returns and is capped at
+  `LIST_PAGE_CAP` (20). A `limit` of `0` returns an empty page.
+- `next_cursor` is an `IdCursor` that resumes after the last resource the
+  page returned — the same rule `list_by_creator_page` uses. Resources the
+  filters reject are skipped; a page that matches nothing scans the rest of
+  the creator index and ends the iteration with `IdCursor::End`.
+- Tombstoned resources are removed from the creator's index by
+  `tombstone_resource` and are skipped on read, so `state = Some(Tombstoned)`
+  always yields an empty page. Use `get` / `get_resource_state` to audit a
+  tombstoned resource.
+
+### Bounded tag-prefix search
+
+`search_by_tag_prefix(prefix, cursor, limit)` is the discovery read for the
+resources that carry a tag sharing a prefix. It complements `list_by_tag`,
+which only resolves one exact tag.
+
+- **Normalization matches the tag rules.** The prefix is normalized with the
+  same rules tags are stored with (trim ASCII whitespace, lowercase ASCII
+  letters), so `"  DATA "` resolves the same way as `"data"`.
+- **An empty prefix is rejected.** A prefix that normalizes to the empty
+  string would match every tag in the catalog, so the call returns an empty
+  page with `next_cursor = None` instead of an unbounded read.
+- **Bounded.** `limit` is the maximum number of resources the page returns and
+  is clamped to `1..=LIST_PAGE_CAP` (20). A `limit` of `0` still returns one
+  match, so the scan always makes progress and a client following the cursor
+  can never be stuck on the same catalog slot.
+- **Deterministic.** `cursor` is a global catalog index — the same domain as
+  `list_page` and `list_listed_page`. Results follow registration order, so
+  the same ledger state always yields the same sequence, and the cursor names
+  a catalog slot rather than a count of matches.
+- **Tombstoned resources are skipped**, matching `list_by_tag`.
 
 ### Registry export pages
 
