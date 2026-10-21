@@ -115,11 +115,27 @@ and content-hash forms such as `sha256:`, `sha-256:`, or `0x`.
 
 ### Bounded text validation
 
-The contract applies one shared byte-length validator to resource IDs, metadata
-pointers, tags, and creator terms hashes. This keeps exact-limit acceptance and
-over-limit errors consistent as new text fields are added. The public limits and
-error codes are unchanged: IDs are 1–24 bytes, metadata is 1–512 bytes, tags
-are 1–32 bytes (up to 8 tags), and terms hashes are at most 64 bytes.
+All limits below count UTF-8 bytes (`String::len()`), not Unicode code points.
+An empty tag list is valid; each supplied tag is validated separately. Empty
+acceptance is intentionally field-specific and this matrix records the current
+public behavior.
+
+| Public string argument | Empty | At byte limit | Multibyte input | Over limit |
+| --- | --- | --- | --- | --- |
+| Resource `id` | Reject | 24 ASCII bytes accepted | Rejected by ASCII lowercase/digit format | `InvalidResourceId` |
+| Metadata pointer | `EmptyMetadata` | 512 bytes accepted with a supported prefix | Counted as UTF-8 bytes after a supported prefix | `MetadataTooLong` |
+| Each tag | `InvalidTag` (empty list is allowed) | 32 bytes before and after normalization | Counted as UTF-8 bytes; normalization only trims ASCII whitespace and folds ASCII case | `InvalidTag` |
+| Creator / registry `terms_hash` | Accepted | 64 bytes accepted | Counted as UTF-8 bytes | `TermsHashTooLong` |
+| `reason_hash` | Accepted | 64 bytes accepted | Counted as UTF-8 bytes | `FlagReasonHashTooLong` |
+| `receipt_id` | `InvalidReceiptId` | 64 bytes accepted | Counted as UTF-8 bytes | `InvalidReceiptId` |
+| Payment, refund, lease, or receipt `tx_hash` | `InvalidTxHash` | 128 bytes accepted | Counted as UTF-8 bytes | `InvalidTxHash` |
+| Optional `content_hash` | Rejected | 128 bytes accepted | Counted as UTF-8 bytes | `ContentHashTooLong` |
+| Attestation hash | Rejected | Untagged digest: 64 bytes; tagged form: algorithm 1–16 ASCII bytes plus `:` plus digest 1–64 bytes | Digest length is counted in UTF-8 bytes; algorithm remains ASCII-only | `AttestationHashTooLong` |
+
+Boundary, empty, and multibyte behavior is covered by focused tests alongside
+the corresponding field tests. In particular, `set_terms_hash` preserves its
+existing compatibility rule that an empty value clears/stores an empty hash;
+32 two-byte `é` characters fit exactly, while 33 do not.
 
 ### Catalog page (cursor primitive)
 
