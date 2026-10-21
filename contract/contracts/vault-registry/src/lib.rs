@@ -99,6 +99,8 @@ pub const MAX_BATCH_PRICE_UPDATES: u32 = 10;
 pub const MAX_BATCH_METADATA_UPDATES: u32 = 10;
 /// Maximum number of lifecycle states returned by `get_resource_states`.
 pub const MAX_BATCH_RESOURCE_STATES: u32 = 20;
+/// Maximum number of resource ids accepted by `check_tag_index` in one call.
+pub const MAX_TAG_INDEX_CHECK: u32 = 20;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -192,6 +194,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("exists_many", "—"),
     ("get_owner", "—"),
     ("get_owner_many", "—"),
+    ("get_revision", "—"),
     ("count", "—"),
     ("listed_count", "—"),
     ("state_digest", "—"),
@@ -278,6 +281,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Index repair ──────────────────────────────────────────────────────
     ("repair_index", "admin"),
     ("repair_tag_index", "admin"),
+    ("check_tag_index", "—"),
     // ── Payment receipts ──────────────────────────────────────────────────
     ("record_payment", "settler + payer"),
     ("record_payment_idempotent", "settler + payer"),
@@ -390,11 +394,11 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("regmemo", "memo_hash: BytesN<32>"),
     (
         "setprice",
-        "PriceUpdated { id, old_price, new_price, updater }",
+        "PriceUpdated { id, old_price, new_price, updater, revision }",
     ),
     (
         "updmeta",
-        "MetadataUpdateEvent { id, old_metadata, new_metadata }",
+        "MetadataUpdateEvent { id, old_metadata, new_metadata, revision }",
     ),
     (
         "settags",
@@ -445,6 +449,10 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     (
         "anchrfail",
         "AnchorFailure { resource_id, buyer, receipt_hash, reason, ledger }",
+    ),
+    (
+        "anchrxhst",
+        "(resource_id: String, buyer: Address) — data is the final AnchorAttempts",
     ),
     ("addmod", "RoleChange { admin, target, granted: true }"),
     ("rmmod", "RoleChange { admin, target, granted: false }"),
@@ -941,9 +949,46 @@ pub enum DataKey {
     /// Redundant metadata pointers set via `set_metadata_pointers`. The
     /// entry at `primary` always mirrors `Resource.metadata`.
     MetadataPointers(String),
+    /// Moderator who last called `flag_resource`, `unflag_resource`, or
+    /// `set_flag_reason_hash` for a resource. Read back by `flag_details`.
+    FlagModerator(String),
+    /// Aggregated settled-payment earnings for a creator wallet address.
+    /// Written by `settle_payment` and read by `creator_earnings_estimate`.
+    /// Value type: `(i128, u32)` tuple — (total USDC stroops of all settled
+    /// receipts for resources owned by this creator at settlement time, count).
+    CreatorEarnings(Address),
+    /// Ordered history of verification status changes for a verifier address.
+    /// Written by `set_verification_status`; read by `get_verifier_status_history`.
+    /// Value type: `Vec<VerifierStatusEntry>`.
+    VerifierHistory(Address),
     /// Optional recovery admin set via `bootstrap_dual_admin` or
     /// `set_recovery_admin`; may call `recover_admin` if the admin key is lost.
     RecoveryAdmin,
+    /// Monotonic listing revision for a resource, bumped once per successful
+    /// metadata or price change. Absent (read as `0`) until the first such
+    /// mutation. Read by `get_revision`.
+    Revision(String),
+    /// Registry-wide creator terms hash fallback, used by `get_terms_hash`
+    /// when a resource has no per-creator override.
+    RegistryTerms,
+    /// Creator-configured refund window in ledgers for payment receipts.
+    RefundWindow,
+    /// Ledger sequence after which a receipt is no longer refundable by its
+    /// creator. Written when the receipt is settled.
+    RefundDeadline(String),
+    /// Address entitled to receive a refund for a payment receipt.
+    PaymentRecipient(String),
+    /// A recorded refund for a payment receipt, keyed by `refund_id`.
+    RefundReceipt(String),
+    /// Cumulative refunded amount for a payment receipt id.
+    RefundedAmount(String),
+    /// Secondary index mapping a refund settlement tx hash to its `refund_id`.
+    RefundTxHash(String),
+    /// Rejected-attempt bookkeeping for a purchase-receipt anchor pair
+    /// `(resource_id, buyer)`.
+    AnchorAttempts(String, Address),
+    /// A time-limited access lease for `(resource_id, holder)`.
+    Lease(String, Address),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -979,6 +1024,8 @@ pub struct MetadataUpdateEvent {
     pub id: String,
     pub old_metadata: String,
     pub new_metadata: String,
+    /// Listing revision after this update (see `get_revision`).
+    pub revision: u32,
 }
 
 /// Structured payload published with the `setprice` event.
@@ -992,6 +1039,28 @@ pub struct PriceUpdated {
     pub old_price: i128,
     pub new_price: i128,
     pub updater: Address,
+    /// Listing revision after this update (see `get_revision`).
+    pub revision: u32,
+}
+
+/// One `(resource_id, tag)` pair reported by [`VaultRegistry::check_tag_index`].
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagMembership {
+    pub id: String,
+    pub tag: String,
+}
+
+/// Result of [`VaultRegistry::check_tag_index`]. `missing` lists memberships
+/// the resource carries but the tag index does not; `stale` lists memberships
+/// the tag index holds that the resource does not carry.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagIndexReport {
+    /// In resource tags but absent from `TagIndex`.
+    pub missing: Vec<TagMembership>,
+    /// Present in `TagIndex` but absent from the resource's tags.
+    pub stale: Vec<TagMembership>,
 }
 
 /// Registry-level fee and royalty configuration.
@@ -1159,8 +1228,12 @@ impl AnchorFailureReason {
     /// mapping stays total.
     pub fn as_error(self) -> Error {
         match self {
-            AnchorFailureReason::ResourceNotFound => Error::NotFound,
-            AnchorFailureReason::InvalidReceiptHash => Error::InvalidTxHash,
+            AnchorFailureReason::ResourceNotFound | AnchorFailureReason::NoPaymentRecorded => {
+                Error::NotFound
+            }
+            AnchorFailureReason::InvalidReceiptHash | AnchorFailureReason::ReceiptHashMismatch => {
+                Error::InvalidTxHash
+            }
             AnchorFailureReason::DuplicateReceipt => Error::DuplicateReceipt,
             AnchorFailureReason::RetryTooSoon | AnchorFailureReason::AttemptsExhausted => {
                 Error::InvalidPaymentTransition
@@ -1243,7 +1316,10 @@ pub struct Lease {
     pub recorded_at: u32,
 }
 
-#[contracterror]
+// Spec export is disabled because this enum exceeds the XDR limit of 50
+// `ScSpecUdtErrorEnumCaseV0` entries; the discriminants and names below remain
+// the on-wire contract error codes documented in `contract/README.md`.
+#[contracterror(export = false)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
@@ -1518,6 +1594,7 @@ impl VaultRegistry {
             return Ok(());
         }
 
+        let revision = Self::bump_listing_revision(&env, &id)?;
         let old_price = resource.price;
         let updater = resource.creator.clone();
         resource.price = new_price;
@@ -1529,6 +1606,7 @@ impl VaultRegistry {
                 old_price,
                 new_price,
                 updater,
+                revision,
             },
         );
         Ok(())
@@ -1575,6 +1653,7 @@ impl VaultRegistry {
                 continue;
             }
 
+            let revision = Self::bump_listing_revision(&env, &id)?;
             let old_price = resource.price;
             let updater = resource.creator.clone();
             resource.price = new_price;
@@ -1586,6 +1665,7 @@ impl VaultRegistry {
                     old_price,
                     new_price,
                     updater,
+                    revision,
                 },
             );
         }
@@ -1693,6 +1773,7 @@ impl VaultRegistry {
 
         Self::validate_metadata_pointer(&metadata)?;
 
+        let revision = Self::bump_listing_revision(&env, &id)?;
         let old_metadata = resource.metadata.clone();
         resource.metadata = metadata.clone();
         Self::save(&env, &mut resource);
@@ -1706,6 +1787,7 @@ impl VaultRegistry {
                 id,
                 old_metadata,
                 new_metadata: metadata,
+                revision,
             },
         );
         Ok(())
@@ -1771,6 +1853,7 @@ impl VaultRegistry {
             if resource.frozen || resource.content_hash.is_some() {
                 return Err(Error::MetadataFrozen);
             }
+            let revision = Self::bump_listing_revision(&env, &id)?;
             let old_metadata = resource.metadata.clone();
             resource.metadata = primary_pointer.clone();
             Self::save(&env, &mut resource);
@@ -1780,6 +1863,7 @@ impl VaultRegistry {
                     id: id.clone(),
                     old_metadata,
                     new_metadata: primary_pointer,
+                    revision,
                 },
             );
         }
@@ -2797,6 +2881,95 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Read-only tag-index integrity check for a bounded set of resource ids.
+    ///
+    /// Compares each resource's canonical tags (the source of truth) against
+    /// `TagIndex` membership and reports drift in both directions:
+    /// - [`TagIndexReport::missing`] — the resource carries the tag but the
+    ///   index does not list the id under it.
+    /// - [`TagIndexReport::stale`] — the index lists the id under a tag the
+    ///   resource does not carry.
+    ///
+    /// Bounded by [`MAX_TAG_INDEX_CHECK`]. Stale memberships are audited only
+    /// under the union of tags carried by the checked resources; memberships
+    /// under tags outside that union are not reported (use `repair_tag_index`
+    /// for a full rebuild). Never writes storage and never emits events, so it
+    /// is safe to run from operational tooling before a repair.
+    ///
+    /// Errors deterministically:
+    /// - [`Error::BatchTooLarge`] — more than [`MAX_TAG_INDEX_CHECK`] ids
+    /// - [`Error::NotFound`] — any id is not a registered resource
+    /// - [`Error::InvalidResourceId`] — any id fails format validation
+    pub fn check_tag_index(env: Env, ids: Vec<String>) -> Result<TagIndexReport, Error> {
+        if ids.len() > MAX_TAG_INDEX_CHECK {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut missing: Vec<TagMembership> = Vec::new(&env);
+        let mut stale: Vec<TagMembership> = Vec::new(&env);
+
+        // Tag universe for the stale audit: every normalized tag carried by
+        // any checked resource.
+        let mut universe: Vec<String> = Vec::new(&env);
+        let mut resources: alloc::vec::Vec<(String, Vec<String>)> = alloc::vec::Vec::new();
+
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            Self::validate_resource_id(&id)?;
+            let resource = Self::load(&env, &id)?;
+            let mut norm_tags: Vec<String> = Vec::new(&env);
+            for j in 0..resource.tags.len() {
+                let tag = Self::normalize_tag(&env, &resource.tags.get(j).unwrap());
+                if !universe.contains(&tag) {
+                    universe.push_back(tag.clone());
+                }
+                norm_tags.push_back(tag);
+            }
+            resources.push((id, norm_tags));
+        }
+
+        for (id, norm_tags) in resources.iter() {
+            // Missing: resource carries the tag but the index omits the id.
+            for j in 0..norm_tags.len() {
+                let tag = norm_tags.get(j).unwrap();
+                let idx_key = DataKey::TagIndex(tag.clone());
+                let members: Vec<String> = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Vec<String>>(&idx_key)
+                    .unwrap_or_else(|| Vec::new(&env));
+                if !members.contains(id) {
+                    missing.push_back(TagMembership {
+                        id: id.clone(),
+                        tag: tag.clone(),
+                    });
+                }
+            }
+
+            // Stale: index lists the id under a universe tag the resource lacks.
+            for j in 0..universe.len() {
+                let tag = universe.get(j).unwrap();
+                if norm_tags.contains(&tag) {
+                    continue;
+                }
+                let idx_key = DataKey::TagIndex(tag.clone());
+                let members: Vec<String> = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Vec<String>>(&idx_key)
+                    .unwrap_or_else(|| Vec::new(&env));
+                if members.contains(id) {
+                    stale.push_back(TagMembership {
+                        id: id.clone(),
+                        tag: tag.clone(),
+                    });
+                }
+            }
+        }
+
+        Ok(TagIndexReport { missing, stale })
+    }
+
     /// Fetch a resource. Errors with `NotFound` if it does not exist.
     pub fn get(env: Env, id: String) -> Result<Resource, Error> {
         Self::validate_resource_id(&id)?;
@@ -2933,6 +3106,16 @@ impl VaultRegistry {
             result.push_back(resource.map(|resource| resource.creator));
         }
         Ok(result)
+    }
+
+    /// Monotonic listing revision for a resource. Starts at `0` and
+    /// increments by exactly one on every successful metadata or price
+    /// mutation; rejected calls leave it unchanged. Errors `NotFound` when
+    /// the resource does not exist.
+    pub fn get_revision(env: Env, id: String) -> Result<u32, Error> {
+        Self::validate_resource_id(&id)?;
+        Self::load(&env, &id)?;
+        Ok(Self::listing_revision(&env, &id))
     }
 
     /// Total number of resources successfully registered (monotonic; not decremented on transfer).
@@ -3823,7 +4006,19 @@ impl VaultRegistry {
             amount,
             &tx_hash,
         )?;
-        Self::write_payment(&env, receipt_id, resource_id, payer, amount, tx_hash)?;
+        Self::write_payment(
+            &env,
+            receipt_id.clone(),
+            resource_id,
+            payer,
+            amount,
+            tx_hash.clone(),
+        )?;
+        // This entry point cannot prove which resource the settlement paid for,
+        // so surface that with a `nomemo` provenance warning. Prefer
+        // `record_payment_with_memo`.
+        env.events()
+            .publish((symbol_short!("nomemo"),), (receipt_id, tx_hash));
         Ok(())
     }
 
@@ -5603,6 +5798,27 @@ impl VaultRegistry {
         let key = DataKey::Resource(resource.id.clone());
         env.storage().persistent().set(&key, resource as &Resource);
         Self::bump_persistent(env, &key);
+    }
+
+    /// Increment the listing revision for `id` by one. Fails with
+    /// [`Error::RevisionOverflow`] (without writing) when the counter is
+    /// already at `u32::MAX`, so the revision can never wrap.
+    fn bump_listing_revision(env: &Env, id: &String) -> Result<u32, Error> {
+        let key = DataKey::Revision(id.clone());
+        let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        let next = current.checked_add(1).ok_or(Error::RevisionOverflow)?;
+        env.storage().persistent().set(&key, &next);
+        Self::bump_persistent(env, &key);
+        Ok(next)
+    }
+
+    /// Current listing revision for `id`. `0` until the first metadata or
+    /// price mutation.
+    fn listing_revision(env: &Env, id: &String) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Revision(id.clone()))
+            .unwrap_or(0)
     }
 
     /// Extend persistent entry TTL when below threshold (Soroban archival safety).

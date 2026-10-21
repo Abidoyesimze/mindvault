@@ -4837,6 +4837,9 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.accept_admin(&admin2);
     record(&env, &client, &mut observed);
 
+    client.set_registry_terms_hash(&String::from_str(&env, "regterms")); // -> "setregt"
+    record(&env, &client, &mut observed);
+
     // Verifier role, verification mirror, freeze, and index repair.
     let old_verifier = Address::generate(&env);
     let verifier = Address::generate(&env);
@@ -7975,9 +7978,10 @@ fn record_payment_emits_payment_event() {
 
     client.record_payment(&settler, &receipt_id, &id, &payer, &amount, &tx_hash);
 
-    // env.events().all() reflects the most recent invocation
+    // env.events().all() reflects the most recent invocation: `payment`
+    // followed by the `nomemo` provenance warning.
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "exactly one event should be emitted");
+    assert_eq!(all.len(), 2, "payment + nomemo events should be emitted");
 
     let (_, topics, data) = all.get(0).unwrap();
     assert_eq!(
@@ -8232,7 +8236,7 @@ fn record_payment_settle_payment_anchor_end_to_end() {
     };
 
     let payment_events = env.events().all();
-    assert_eq!(payment_events.len(), 1);
+    assert_eq!(payment_events.len(), 2);
     let (payment_contract, payment_topics, payment_data) = payment_events.get(0).unwrap();
     assert_eq!(payment_contract, client.address);
     assert_eq!(payment_topics.len(), 2);
@@ -9988,6 +9992,11 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 47] {
             "AnchorFailure",
             3,
         ),
+        (
+            DataKey::AnchorAttempts(id.clone(), who.clone()),
+            "AnchorAttempts",
+            3,
+        ),
         (DataKey::TagIndex(id.clone()), "TagIndex", 2),
         (DataKey::FeeConfig, "FeeConfig", 1),
         (DataKey::Moderator(who.clone()), "Moderator", 2),
@@ -10088,6 +10097,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::AnchorFailure(_, _) => "AnchorFailure",
+            DataKey::AnchorAttempts(_, _) => "AnchorAttempts",
             DataKey::TagIndex(_) => "TagIndex",
             DataKey::FeeConfig => "FeeConfig",
             DataKey::Moderator(_) => "Moderator",
@@ -11659,3 +11669,4 @@ include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
+include!("test/stellar_wave_970_971_975_976.rs");
