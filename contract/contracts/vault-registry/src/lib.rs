@@ -1502,6 +1502,11 @@ impl VaultRegistry {
     /// `AlreadyRegistered` and leaves resource records, counters, indexes, and
     /// events unchanged — see the within-batch duplicate guard below.
     ///
+    /// An empty batch (`items.len() == 0`) is rejected with `BatchTooLarge`
+    /// to prevent callers from silently succeeding on a no-op they did not
+    /// intend, which would conceal bugs where the input list was never
+    /// populated.
+    ///
     /// Use case: Bulk onboarding of resources by publishers or automated systems.
     pub fn register_batch(
         env: Env,
@@ -1511,7 +1516,8 @@ impl VaultRegistry {
         creator.require_auth();
         Self::require_not_paused(&env)?;
 
-        if items.len() > MAX_BATCH_REGISTER {
+        // Reject both empty batches (concealed no-ops) and oversized ones.
+        if items.len() == 0 || items.len() > MAX_BATCH_REGISTER {
             return Err(Error::BatchTooLarge);
         }
 
@@ -1627,8 +1633,11 @@ impl VaultRegistry {
     /// validated before any price is written. If one item is invalid, no
     /// prices are changed. Duplicate IDs use the last supplied price.
     ///
-    /// The batch is capped at [`MAX_BATCH_PRICE_UPDATES`] items. A no-op price
-    /// update succeeds without writing storage or emitting `setprice`.
+    /// The batch is capped at [`MAX_BATCH_PRICE_UPDATES`] items. An empty
+    /// batch (`updates.len() == 0`) is rejected with `BatchTooLarge` to
+    /// prevent callers from silently succeeding on an unintended no-op. A
+    /// no-op price update (same price as current) succeeds without writing
+    /// storage or emitting `setprice`.
     pub fn set_price_many(
         env: Env,
         creator: Address,
@@ -1636,7 +1645,7 @@ impl VaultRegistry {
     ) -> Result<(), Error> {
         creator.require_auth();
         Self::require_not_paused(&env)?;
-        if updates.len() > MAX_BATCH_PRICE_UPDATES {
+        if updates.len() == 0 || updates.len() > MAX_BATCH_PRICE_UPDATES {
             return Err(Error::BatchTooLarge);
         }
 
@@ -1685,7 +1694,9 @@ impl VaultRegistry {
 
     /// Update the metadata pointer for a small bounded set of owned resources
     /// in one transaction. The batch is capped at
-    /// [`MAX_BATCH_METADATA_UPDATES`] items.
+    /// [`MAX_BATCH_METADATA_UPDATES`] items. An empty batch
+    /// (`updates.len() == 0`) is rejected with `BatchTooLarge` to prevent
+    /// callers from silently succeeding on an unintended no-op.
     ///
     /// Failure behavior is **atomic**: every item is validated (id format,
     /// ownership, metadata-freeze / content-hash rules, pointer validity)
@@ -1706,7 +1717,7 @@ impl VaultRegistry {
     ) -> Result<(), Error> {
         creator.require_auth();
         Self::require_not_paused(&env)?;
-        if updates.len() > MAX_BATCH_METADATA_UPDATES {
+        if updates.len() == 0 || updates.len() > MAX_BATCH_METADATA_UPDATES {
             return Err(Error::BatchTooLarge);
         }
 
@@ -3706,12 +3717,28 @@ impl VaultRegistry {
     /// only rewrites the derived `Index`/`Count` pointers, so it's safe to
     /// re-run with the current correct id list as a no-op. See
     /// `docs/index-repair.md` for the full repair strategy.
+    ///
+    /// An empty `ids` list is a validated no-op: it returns `Ok(())` without
+    /// modifying any index slot or emitting a `reindex` event. Suppressing
+    /// the event matches `repair_tag_index`'s empty-list behavior — the
+    /// `reindex` payload is the signal operators and audit tooling use to see
+    /// that a repair ran, so emitting it for a zero-length list would assert
+    /// a repair that never touched the index.
+    ///
+    /// When `ids.len() < old_count`, stale `Index` slots in the range
+    /// `[ids.len(), old_count)` are removed from persistent storage so the
+    /// index is fully convergent after any number of repairs: two identical
+    /// calls to `repair_index` always produce byte-identical on-chain state.
     pub fn repair_index(env: Env, ids: Vec<String>) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
         let len = ids.len();
+
+        // Validate all inputs before any write so a failure leaves the index
+        // unchanged. Unknown IDs produce `NotFound`; duplicate IDs produce
+        // `DuplicateInRepair`.
         for i in 0..len {
             let id = ids.get(i).unwrap();
             if !env
@@ -3728,14 +3755,34 @@ impl VaultRegistry {
             }
         }
 
+        // An empty list is a validated no-op: nothing to index, nothing to
+        // remove, no event.
+        if len == 0 {
+            return Ok(());
+        }
+
         let old_count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
 
+        // Write the new index slots.
         for i in 0..len {
             let id = ids.get(i).unwrap();
             let idx_key = DataKey::Index(i);
             env.storage().persistent().set(&idx_key, &id);
             Self::bump_persistent(&env, &idx_key);
         }
+
+        // Remove stale index slots left over from a prior, larger repair so
+        // the index is fully convergent: running `repair_index` twice with the
+        // same list always yields the same on-chain state.
+        if old_count > len {
+            for i in len..old_count {
+                let stale_key = DataKey::Index(i);
+                if env.storage().persistent().has(&stale_key) {
+                    env.storage().persistent().remove(&stale_key);
+                }
+            }
+        }
+
         env.storage().instance().set(&DataKey::Count, &len);
         Self::bump_instance(&env);
 
