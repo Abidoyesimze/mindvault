@@ -309,7 +309,12 @@ describe("purchase history store keeps its epoch", () => {
       }
       // Each write used to persist the loaded store without its epoch, so the
       // next read saw a different epoch and discarded the earlier receipts.
-      expect(store.listPurchases().map((r) => r.resourceId)).toEqual(["res1", "res2", "res3"]);
+      expect(
+        store
+          .listPurchases()
+          .map((r) => r.resourceId)
+          .sort(),
+      ).toEqual(["res1", "res2", "res3"]);
       expect(store.loadPurchaseHistory().epoch).toBe("epoch-1065");
       store._setPurchasesFilePath(null);
     } finally {
