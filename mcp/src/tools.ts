@@ -15,6 +15,13 @@
  */
 
 import { catalogFilterInputProperties } from "./catalogFilters.js";
+import { ONCHAIN_PREFLIGHT_OUTPUT_SCHEMA } from "./onchainPreflight.js";
+import { MIGRATION_PREVIEW_OUTPUT_SCHEMA } from "./stateMigrationPreview.js";
+import {
+  SUPPORT_BUNDLE_DEFAULT_AUDIT_LINES,
+  SUPPORT_BUNDLE_MAX_AUDIT_LINES,
+  SUPPORT_BUNDLE_OUTPUT_SCHEMA,
+} from "./supportBundle.js";
 import { withToolErrorVariant } from "./outputValidation.js";
 import {
   AGENT_STATUS_OUTPUT_SCHEMA,

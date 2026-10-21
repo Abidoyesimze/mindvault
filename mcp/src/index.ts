@@ -178,7 +178,6 @@ import {
 } from "./stateBackup.js";
 import { provenanceChain, recordResourceHistory, resourceChangeLog } from "./resourceHistory.js";
 import { logger } from "./logger.js";
-import { correlationHeaders } from "./correlation.js";
 import {
   buildSettlementSnapshot,
   estimateSettlementSteps,
@@ -204,7 +203,12 @@ import {
   withTimeout,
   type TimeoutService,
 } from "./httpTimeout.js";
-import { resolveToolTimeouts, timeoutForTool } from "./toolTimeoutOverrides.js";
+import {
+  assertToolTimeoutOverridesWithinDeadline,
+  resolveToolTimeouts,
+  resolveTransportTimeoutMax,
+  timeoutForTool,
+} from "./toolTimeoutOverrides.js";
 import { describeProxyConfig, resolveProxyConfig, withProxy } from "./proxy.js";
 import {
   describeRetryPolicy,
@@ -265,7 +269,12 @@ import {
   type CatalogCacheContext,
 } from "./catalogCache.js";
 import { createCatalogCursor, resolveCatalogCursor } from "./catalogCursor.js";
-import { publishBatch, type BatchPublishItem } from "./tools/publish.js";
+import {
+  acceptTransfer,
+  cancelTransfer,
+  publishBatch,
+  type BatchPublishItem,
+} from "./tools/publish.js";
 import { buyLease, leaseStatus } from "./tools/leases.js";
 import {
   _setAgentWallet as _setAgentWalletRuntime,

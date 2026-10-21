@@ -625,6 +625,10 @@ function expectation(spec: ArgumentSpec): string {
       if (spec.maxLength) return `a string of up to ${spec.maxLength} characters`;
       return "a string";
     }
+    case "stellar_address":
+      return "a Stellar public key (G…)";
+    case "stellar_secret":
+      return "a Stellar secret seed (S…)";
   }
 }
 
