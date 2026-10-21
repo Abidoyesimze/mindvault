@@ -430,6 +430,8 @@ export const PURCHASE_HISTORY_OUTPUT_SCHEMA = {
           receiptRef: { type: ["string", "null"] },
           title: { type: "string" },
           profile: { type: "string" },
+          clientIdempotencyKey: { type: "string" },
+          status: { type: "string", enum: ["pending", "settled", "failed"] },
           // Pre-resolved Stellar Expert URL for the settlement transaction.
           // Null when txHash was not recorded. Pass txHash to mindvault_tx_status
           // to check live on-chain settlement status.
@@ -443,6 +445,7 @@ export const PURCHASE_HISTORY_OUTPUT_SCHEMA = {
           "timestamp",
           "receiptRef",
           "explorerUrl",
+          "status",
         ],
       },
     },
