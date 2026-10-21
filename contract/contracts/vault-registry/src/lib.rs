@@ -92,6 +92,8 @@ pub const LIST_PAGE_CAP: u32 = 20;
 /// asked for, so migration tooling cannot build a call that exceeds the
 /// ledger's read budget as the catalog grows.
 pub const EXPORT_PAGE_CAP: u32 = 20;
+/// Maximum number of catalog entries intended for a resumable index-repair page.
+pub const INDEX_REPAIR_PAGE_CAP: u32 = 20;
 /// Version of the [`ResourceExport`] view. Bumped only when a field is added,
 /// removed, or changes meaning, independently of `RESOURCE_SCHEMA_VERSION`:
 /// the export view is a stable projection, not the storage layout.
@@ -753,6 +755,22 @@ pub struct CatalogPage {
     pub next_cursor: Option<u32>,
 }
 
+/// Persisted cursor metadata for a future bounded `repair_index` continuation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexRepairProgress {
+    pub next_cursor: u32,
+    pub total: u32,
+}
+
+/// Result shape for one bounded index-repair call.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexRepairPage {
+    pub processed: u32,
+    pub next_cursor: Option<u32>,
+}
+
 /// One page of a deterministic registry-state digest for off-chain indexer
 /// reconciliation.
 ///
@@ -874,6 +892,8 @@ pub enum DataKey {
     Resource(String),
     Count,
     Index(u32),
+    /// Cursor state for a resumable catalog-index repair.
+    IndexRepairProgress,
     Admin,
     PendingAdmin,
     CreatorTerms(Address),
