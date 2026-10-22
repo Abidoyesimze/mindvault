@@ -35,6 +35,7 @@ export type ErrorCode =
   | "MV_TIMEOUT"
   | "MV_RATE_LIMITED"
   | "MV_UPSTREAM_ERROR"
+  | "MV_MALFORMED_RESPONSE"
   // Request and arguments
   | "MV_ARGUMENT_INVALID"
   | "MV_TOOL_UNKNOWN"
@@ -124,6 +125,13 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "safe",
     "The upstream service returned a 5xx.",
     "Retry shortly. If it persists, the service is down and no client change will help.",
+  ),
+  MV_MALFORMED_RESPONSE: spec(
+    "MV_MALFORMED_RESPONSE",
+    "server",
+    "safe",
+    "The upstream answered with a body that was not JSON — a proxy, gateway or load balancer usually does this, and the request may never have reached the service.",
+    "Retry once. If it persists, quote the request id from the error when reporting the failure.",
   ),
   MV_ARGUMENT_INVALID: spec(
     "MV_ARGUMENT_INVALID",
@@ -327,6 +335,10 @@ export function localErrorCode(error: unknown): ErrorCode | null {
 
 /** Refine a mapped HTTP failure into a specific code. */
 export function codeForMappedError(mapped: MappedError): ErrorCode {
+  // A non-JSON body says the request never reached the service, whatever the
+  // status was: a 502 from a proxy is a gateway problem, not an API outage,
+  // and the two need different next steps.
+  if (mapped.malformed) return "MV_MALFORMED_RESPONSE";
   switch (mapped.category) {
     case "network":
       return "MV_NETWORK_UNREACHABLE";
@@ -402,6 +414,13 @@ export interface ToolErrorPayload {
   action: string;
   /** The tool call this failure belongs to (#572), when one is in flight. */
   correlationId?: string;
+  /**
+   * The upstream's own request id, when the failure carries one (#1019).
+   *
+   * Present for a failure whose response was not JSON — the id is how the
+   * request is found in the server's logs.
+   */
+  requestId?: string;
 }
 
 /** Build the failure payload for a tool result. */
@@ -427,6 +446,7 @@ export function toolErrorPayload(input: {
     // profile or a contract id); the catalog's is the generic fallback.
     action: input.mapped?.action ?? meta.action,
     ...(input.correlationId ? { correlationId: input.correlationId } : {}),
+    ...(input.mapped?.malformed?.requestId ? { requestId: input.mapped.malformed.requestId } : {}),
   };
 }
 
